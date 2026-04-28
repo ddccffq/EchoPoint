@@ -1,0 +1,41 @@
+# 1. 全局规则：自动检测文本文件，并在索引中统一为 LF
+* text=auto
+
+# 2. 特定文本文件：强制使用 LF
+*.sh           text eol=lf
+*.js           text eol=lf
+*.json         text eol=lf
+*.html         text eol=lf
+*.css          text eol=lf
+*.md           text eol=lf
+*.py           text eol=lf
+*.rb           text eol=lf
+Dockerfile     text eol=lf
+Makefile       text eol=lf
+
+# 3. Windows 专用脚本：强制使用 CRLF（必需，否则 .bat 可能无法运行）
+*.bat          text eol=crlf
+*.cmd          text eol=crlf
+*.ps1          text eol=crlf
+
+# 4. 二进制文件：防止 Git 误判和转换（关键！）
+*.png          binary
+*.jpg          binary
+*.jpeg         binary
+*.gif          binary
+*.ico          binary
+*.pdf          binary
+*.zip          binary
+*.tar.gz       binary
+*.exe          binary
+*.dll          binary
+*.so           binary
+*.class        binary
+*.jar          binary
+*.lock         binary  # 常见于包管理锁文件，虽然是文本，但应保持一致
+
+# 5. 特殊工具配置：明确标记为文本
+.gitattributes  text
+.gitignore      text
+.gitlab-ci.yml  text
+LICENSE         text

@@ -1,0 +1,79 @@
+\documentclass{beamer}
+
+% 选择主题（有多种风格可选）
+\usetheme{Madrid}      % 主题
+\usecolortheme{default} % 颜色主题
+
+% 中文支持（如果需要）
+\usepackage[UTF8]{ctex}
+
+% 其他常用包
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+
+% 标题信息
+\title{Beamer幻灯片示例}
+\subtitle{用LaTeX制作演示文稿}
+\author{张三}
+\institute{某某大学}
+\date{\today}
+
+\begin{document}
+
+% 标题页
+\begin{frame}
+    \titlepage
+\end{frame}
+
+% 目录页
+\begin{frame}{目录}
+    \tableofcontents
+\end{frame}
+
+% 第一部分
+\section{介绍}
+
+\begin{frame}{Beamer是什么？}
+    \begin{itemize}
+        \item 一个LaTeX的文档类
+        \item 用于制作演示幻灯片
+        \item 支持数学公式、图表等
+    \end{itemize}
+\end{frame}
+
+\section{核心功能}
+
+\begin{frame}{插入数学公式}
+    \begin{block}{欧拉公式}
+        \[ e^{i\pi} + 1 = 0 \]
+    \end{block}
+    
+    \begin{alertblock}{注意}
+        这是Beamer中最优美的公式之一。
+    \end{alertblock}
+\end{frame}
+
+\begin{frame}{插入图片}
+    \begin{figure}
+        \centering
+        \includegraphics[width=0.5\textwidth]{example-image}
+        \caption{示例图片}
+    \end{figure}
+\end{frame}
+
+\section{总结}
+
+\begin{frame}{总结}
+    \begin{enumerate}
+        \item 简单易学
+        \item 专业美观
+        \item 稳定可靠
+    \end{enumerate}
+    
+    \vspace{1cm}
+    \centering
+    \textbf{谢谢观看！}
+\end{frame}
+
+\end{document}

@@ -1,0 +1,3 @@
+\beamer@sectionintoc {1}{介绍}{3}{0}{1}
+\beamer@sectionintoc {2}{核心功能}{4}{0}{2}
+\beamer@sectionintoc {3}{总结}{6}{0}{3}
