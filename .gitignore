@@ -17,3 +17,9 @@ __pycache__/
 *.swo
 *.zip
 *.tar.gz
+*.aux
+*.nav
+*.out
+*.snm
+*.toc
+*.synctex.gz
