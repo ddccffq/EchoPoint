@@ -1,79 +1,334 @@
 \documentclass{beamer}
-
-% 选择主题（有多种风格可选）
-\usetheme{Madrid}      % 主题
+\usepackage[utf8]{inputenc}
+\usetheme{Boadilla}      % 主题
 \usecolortheme{default} % 颜色主题
 
-% 中文支持（如果需要）
-\usepackage[UTF8]{ctex}
-
-% 其他常用包
-\usepackage{amsmath, amssymb}
+\usepackage{mathspec}
+\usepackage{amssymb}
+\usepackage{xcolor}
 \usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{caption}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{colortbl}
+
+\usepackage{tikz}
+\tikzset{x=10mm, y=10mm}
+\usetikzlibrary{arrows.meta, positioning, fit, backgrounds}
+
+\usepackage{listings}
+% 自定义列表环境
+\lstset{
+    numbers=left,           % 行号在左侧
+    % numbersep=5pt,          % 行号与代码的间距
+    %xleftmargin=0pt,        % 左边距 (行号从这里开始算) 
+    % xrightmargin=0pt,
+    frame=single,           % 添加边框 (可选) 
+    % framexleftmargin=0pt,
+    breaklines=true,
+    captionpos=b,           % 关键：将 caption 放在底部 (b = bottom) 
+    % aboveskip=10pt,         % 代码块上方间距
+    % belowskip=10pt,         % 代码块下方间距
+}
+
+\usepackage{makecell}
+\usepackage{setspace}
+\setstretch{1}
+
+\usepackage{fontspec}
+\usepackage{xeCJK}
+\setmainfont{Times New Roman}
+\setsansfont{Arial}
+\setmonofont{Courier New}
+\setCJKmainfont{Songti SC}[
+    AutoFakeBold=true,
+    AutoFakeSlant=true
+]
+\setCJKsansfont{PingFang SC}[
+    AutoFakeBold=true,
+    AutoFakeSlant=true
+]
+\setCJKmonofont{Songti SC}[
+    AutoFakeBold=true,
+    AutoFakeSlant=true
+]
+
+
 \usepackage{hyperref}
 
+% 设置正文大小 (相当于全局基准) 
+\setbeamerfont{normal text}{size=\small}   % 将正文设为 \small 大小
+
+% 设置各级标题大小
+\setbeamerfont{frametitle}{size=\Large}    % 每页标题用 \Large
+\setbeamerfont{title}{size=\huge}          % 首页大标题用 \huge
+\setbeamerfont{author}{size=\normalsize}   % 首页作者名用正常大小
+
+% 设置目录页字体大小
+\setbeamerfont{section in toc}{size=\normalsize}    % 一级目录用正常大小
+\setbeamerfont{subsection in toc}{size=\footnotesize} % 二级目录用小字
+
+% 为了让 \setbeamerfont{normal text} 生效，必须加上这句
+\renewcommand{\normalsize}{\usebeamerfont{normal text}\selectfont}
+
+% 目录风格
+\setbeamertemplate{section in toc}{
+  \leavevmode
+  \leftskip=0pt
+  (\inserttocsectionnumber).\ % 这里改成你想要的格式
+  \inserttocsection
+  \par
+}
+
+% 自定义顶栏
+\setbeamertemplate{headline}{
+  \leavevmode
+  \begin{beamercolorbox}[wd=\paperwidth,ht=2.5ex,dp=1.125ex]{section in head/foot}
+    \hspace{1em}%
+    \insertsectionhead
+    \hfill
+    \insertshorttitle  % 显示短标题，不会报错
+    \hspace*{1em}%
+  \end{beamercolorbox}
+}
+
+\setbeamertemplate{items}[default]
+
 % 标题信息
-\title{Beamer幻灯片示例}
-\subtitle{用LaTeX制作演示文稿}
-\author{张三}
-\institute{某某大学}
+\title{声指令随 - EpochPoint}
+\subtitle{北京邮电大学智能机器人实验期末大作业}
+\author[BUPT]{
+  任志诚 2023212020
+  梁恒 2023212008
+  金泽林 2023212012
+}
+\institute[]{BUPT}
 \date{\today}
 
 \begin{document}
 
-% 标题页
-\begin{frame}
-    \titlepage
-\end{frame}
+    % 标题页
+    \begin{frame}
+        \titlepage
+    \end{frame}
 
-% 目录页
-\begin{frame}{目录}
-    \tableofcontents
-\end{frame}
+    % 目录页
+    \begin{frame}{Content}
+        \tableofcontents
+    \end{frame}
 
-% 第一部分
-\section{介绍}
+    % 第一部分
+    \section{基于异步状态机的离散视觉伺服靠近方案}
 
-\begin{frame}{Beamer是什么？}
-    \begin{itemize}
-        \item 一个LaTeX的文档类
-        \item 用于制作演示幻灯片
-        \item 支持数学公式、图表等
-    \end{itemize}
-\end{frame}
+    \begin{frame}{初始需求分析}
+        初始需求为“机器人听到呼唤后，根据声源定位并移动至人类身旁“。在实际的硬件评估中，存在以下致命物理约束：
+        \begin{enumerate}
+            \item[(1).] 双足步态引发的视觉撕裂：目标设备为人形双足机器人，底盘在行走时身体会产生剧烈的钟摆式晃动，导致视觉帧产生毁灭性的运动模糊，实时动态视觉伺服在物理上不可行；
+            \item[(2).] 多模态对齐灾难：在嘈杂的人群中，单凭声学无法精准锁定发声者的物理坐标
+        \end{enumerate}    
+    \end{frame}
 
-\section{核心功能}
+    \begin{frame}{架构重构}
+        鉴于此，为确保演示验收的$100\%$成功率与系统的绝对安全，本模块做出两项核心工程妥协：
+        \begin{enumerate}
+            \item[(1).] 摒弃“实时边走边看”，采用\textbf{走停看 (Stop-and-Go) 异步离散状态机架构}。在时间轴上严格物理隔离“视觉感知”与“步态移动”
+            \item[(2).] 摒弃严格的声源定位，采用\textbf{声源初定位$+$举手姿态检测}的寻找方式。将复杂的声学测向转化为高鲁棒性的视觉目标锁定
+        \end{enumerate}
+    \end{frame}
 
-\begin{frame}{插入数学公式}
-    \begin{block}{欧拉公式}
-        \[ e^{i\pi} + 1 = 0 \]
-    \end{block}
-    
-    \begin{alertblock}{注意}
-        这是Beamer中最优美的公式之一。
-    \end{alertblock}
-\end{frame}
+    \begin{frame}{ROS 订阅端 (异步非阻塞) }
+        \begin{itemize}
+            \item 听觉触发源：\texttt{/micarrays/wakeup}
+            \begin{itemize}
+                \item 被动监听唤醒信号，触发状态流转
+            \end{itemize}
+            \item 物理安全锁：\texttt{/MediumSize/BodyHub/WalkingStatus}
+            \begin{itemize}
+                \item 高频缓存底盘状态，是开启视觉调用的安全红线
+            \end{itemize}
+            \item 原始视觉缓冲：\texttt{/chin\_camera/image}
+            \begin{itemize}
+                \item 维护长度为1的图像队列，保证最新高清帧可用
+            \end{itemize}
+        \end{itemize}
+    \end{frame}
 
-\begin{frame}{插入图片}
-    \begin{figure}
-        \centering
-        \includegraphics[width=0.5\textwidth]{example-image}
-        \caption{示例图片}
-    \end{figure}
-\end{frame}
+    \begin{frame}{ROS 服务与发布端}
+        \begin{itemize}
+            \item 视觉服务端 (阻塞请求) 
+            \begin{itemize}
+                \item 目标锁定引擎：\texttt{/ros\_gesture\_node/gesture\_detect}
+                \item 传入图像帧，返回手势人体边界框坐标与尺寸
+            \end{itemize}
+            \item 运动控制端 (离散指令) 
+            \begin{itemize}
+                \item 视野索敌：\texttt{/MediumSize/BodyHub/HeadPosition}
+                \item 离散步态：\texttt{/gaitCommand}
+            \end{itemize}
+        \end{itemize}
+    \end{frame}
 
-\section{总结}
+    \begin{frame}{有限状态机 (FSM) 总览}
+        核心四状态流水线：
+        \begin{enumerate}
+            \item STATE\_IDLE：待机监视
+            \item STATE\_VISION\_LOCK：静止视觉锁定
+            \item STATE\_BLIND\_WALK：离散盲走
+            \item STATE\_WAIT\_FOR\_STOP：等待步态停止
+        \end{enumerate}
+    \end{frame}
 
-\begin{frame}{总结}
-    \begin{enumerate}
-        \item 简单易学
-        \item 专业美观
-        \item 稳定可靠
-    \end{enumerate}
-    
-    \vspace{1cm}
-    \centering
-    \textbf{谢谢观看！}
-\end{frame}
+    \begin{frame}{状态0：待机监视 (STATE\_IDLE) }
+        \begin{itemize}
+            \item 执行逻辑：底盘锁定，头部居中，静默更新最新图像帧
+            \item 流转条件：唤醒标志置为True → 进入视觉锁定状态
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{状态1：视觉锁定 (STATE\_VISION\_LOCK) }
+        \begin{itemize}
+            \item 前置检查：必须静止，行走中则跳过当前帧
+            \item 检测逻辑：调用手势检测，未找到则头部偏转，累计3次失败返回待机
+            \item 目标捕获：提取边界框，计算像素偏置$\Delta x$与面积占比$Area\_Ratio$
+            \item 流转：$Area\_Ratio>35\%$ → 到达；否则进入盲走
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{状态2与3：盲走与等待停止}
+        \begin{itemize}
+            \item STATE\_BLIND\_WALK (离散盲走) 
+            \begin{itemize}
+                \item 下发步数与转向角指令，立即切换至等待停止
+            \end{itemize}
+            \item STATE\_WAIT\_FOR\_STOP (阻塞监视) 
+            \begin{itemize}
+                \item 清空视觉缓存，仅轮询底盘状态
+                \item 恢复静止 → 切回视觉锁定
+            \end{itemize}
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{关键异常与防御机制}
+        \begin{enumerate}
+            \item 指令冲突防御：非IDLE状态无视新唤醒信号
+            \item 底层断联看门狗：底盘状态超时1.0秒强制刹车
+            \item 图像过期防御：帧延迟超0.5秒拒绝识别，防止撞墙
+        \end{enumerate}
+    \end{frame}
+
+
+    % 第三部分
+    \section{基于LangChain架构的智能体}
+
+    \begin{frame}{Langchain是什么？}
+        LangChain 是一个用于构建大语言模型 (LLM) 应用的主流开源框架，核心是连接模型、数据与工具，解决 LLM 孤立、无记忆、难执行复杂任务的问题。总而言之，可以用起开发agent从而实现 (在我们的设计中) 
+        如下功能
+        \begin{center}
+        \resizebox{\textwidth}{!}{
+        \begin{tikzpicture}[
+            >=Stealth,
+            % 样式定义
+            host/.style={
+                rectangle, draw=blue!70!black, rounded corners, 
+                minimum height=2.2cm, minimum width=2.8cm, 
+                fill=blue!5, align=center,
+                font=\sffamily\bfseries
+            },
+            cloud/.style={
+                rectangle, draw=orange!70!black, rounded corners,
+                minimum height=2.2cm, minimum width=2.8cm,
+                fill=orange!5, align=center,
+                font=\sffamily\bfseries
+            },
+            process/.style={
+                rectangle, draw=gray!60, dashed, rounded corners=2pt,
+                minimum height=0.7cm, minimum width=2.8cm,
+                fill=white, align=center,
+                font=\sffamily\footnotesize
+            },
+            processgroup/.style={
+                rectangle, draw=gray!40, rounded corners,
+                inner sep=6pt, fill=gray!3, align=center
+            }
+        ]
+
+        % ========== 左右主体 ==========
+        \node[host] (host) {本地 Host\\ (Agent)};
+        \node[cloud, right=4cm of host] (llm) {云端 LLM};
+
+        % ========== 云端内部流程 (放在 LLM 右侧) ==========
+        % 流程组框
+        \node[processgroup, right=1.2cm of llm] (processbox) {
+            \begin{tikzpicture}
+                \node[process] (p1) {图像接收};
+                \node[process, below=0.15cm of p1] (p2) {图文特征融合};
+                \node[process, below=0.15cm of p2] (p3) {LLM 语义理解};
+                \node[process, below=0.15cm of p3] (p4) {生成图像描述};
+                
+                % 流程连线
+                \draw[->, thick, gray!60] (p1) -- (p2);
+                \draw[->, thick, gray!60] (p2) -- (p3);
+                \draw[->, thick, gray!60] (p3) -- (p4);
+            \end{tikzpicture}
+        };
+
+        % 流程组标题
+        \node[above=0.3cm of processbox.north, font=\sffamily\small\color{gray!70!black}] 
+            {内部处理流程};
+
+        % 发送：Host -> LLM
+        \draw[->, thick, blue!70!black] 
+            (host.east) -- 
+            node[above, font=\sffamily\small] {发送 Image + Prompts} 
+            (llm.west);
+
+        % 返回：LLM -> Host
+        \draw[<-, thick, red!70!black] 
+            (host.east) -- 
+            node[below, font=\sffamily\small] {返回图像解析内容} 
+            (llm.west);
+
+        % LLM 到流程组的交互箭头
+        \draw[->, thick, orange!70!black, dashed] 
+            (llm.east) -- 
+            node[above, font=\sffamily\small] {处理} 
+            (processbox.west);
+
+        \end{tikzpicture}
+        }
+    \end{center}
+    \end{frame}
+
+    \begin{frame}{使用LangChain的必要性}
+        调研机器人配置，得到如下信息：
+        \begin{enumerate}
+            \item[(1).] CPU：$4$核$8$线程 (i5-8259U)，无独立显卡，本地推理大模型能力受限。
+            \item[(2).] 内存与存储：仅$8\text{GB}$内存，$116\text{GB}$系统盘，难以加载或运行$7\text{B}$以上量级的LLM。
+            \item[(3).] 系统环境：Ubuntu 16.04 (较老) ，Python 2.7/3.5为主，不直接支持多数新LLM框架。
+            \item[(4).] 开机后负载极低 (CPU空闲$> 0.97$) ，主要运行MQTT消息服务器(EMQX)，适合作为调用云端LLM的轻量Agent。
+        \end{enumerate}
+
+        可见，机器人的配置十分低端，根本无法进行本地图像识别；为了配置本地和云端LLM之间的通信，利用LangChain搭建一个简单的agent是一个可行的方案
+
+    \end{frame}
+
+    \begin{frame}{初步的方案1}
+        由于机器人全局环境为python3.8，而LangChain推荐的python环境为3.10$+$，因此这里通过Docker构建了一个独立的运行环境：
+        \begin{enumerate}
+            \item[(1).] 基础系统为 Ubuntu 20.04，用于隔离机器人原有的老旧系统环境。
+            \item[(2).] 在容器内手动编译并安装 Python 3.10，满足 LangChain 对较新 Python 版本的要求。
+            \item[(3).] 安装 ROS Noetic 相关组件，保留与机器人现有消息通信和中间件对接的能力。
+            \item[(4).] 安装 LangChain、langchain-community 和 langchain-openai，作为本地 Host 调用云端 LLM 的核心依赖。
+        \end{enumerate}
+        因此，该 Docker 环境本质上是一个“ROS 通信 + Python 3.10 + LangChain”的轻量 Agent 运行容器，用于承载机器人端与云端大模型之间的交互逻辑。
+    \end{frame}
+
+    \begin{frame}{初步的方案2}
+        很容易想到分三步实现，第一步为与全局环境通信，我需要弄清楚如何将机器人截屏的图像传输到Docker环境中，第二步为将接受的到的图像上传到云端LLM，第三步为
+        将接收到的文本内容，通过调用相关节点，读出来。
+    \end{frame}
 
 \end{document}
