@@ -59,7 +59,7 @@
 
 \usepackage{hyperref}
 
-% 设置正文大小（相当于全局基准）
+% 设置正文大小 (相当于全局基准) 
 \setbeamerfont{normal text}{size=\small}   % 将正文设为 \small 大小
 
 % 设置各级标题大小
@@ -95,12 +95,14 @@
   \end{beamercolorbox}
 }
 
+\setbeamertemplate{items}[default]
+
 % 标题信息
 \title{声指令随 - EpochPoint}
 \subtitle{北京邮电大学智能机器人实验期末大作业}
 \author[BUPT]{
   任志诚 2023212020
-  梁恒 2023123456
+  梁恒 2023212008
   金泽林 2023212012
 }
 \institute[]{BUPT}
@@ -119,10 +121,110 @@
     \end{frame}
 
     % 第一部分
+    \section{基于异步状态机的离散视觉伺服靠近方案}
+
+    \begin{frame}{初始需求分析}
+        初始需求为“机器人听到呼唤后，根据声源定位并移动至人类身旁“。在实际的硬件评估中，存在以下致命物理约束：
+        \begin{enumerate}
+            \item[(1).] 双足步态引发的视觉撕裂：目标设备为人形双足机器人，底盘在行走时身体会产生剧烈的钟摆式晃动，导致视觉帧产生毁灭性的运动模糊，实时动态视觉伺服在物理上不可行；
+            \item[(2).] 多模态对齐灾难：在嘈杂的人群中，单凭声学无法精准锁定发声者的物理坐标
+        \end{enumerate}    
+    \end{frame}
+
+    \begin{frame}{架构重构}
+        鉴于此，为确保演示验收的$100\%$成功率与系统的绝对安全，本模块做出两项核心工程妥协：
+        \begin{enumerate}
+            \item[(1).] 摒弃“实时边走边看”，采用\textbf{走停看 (Stop-and-Go) 异步离散状态机架构}。在时间轴上严格物理隔离“视觉感知”与“步态移动”
+            \item[(2).] 摒弃严格的声源定位，采用\textbf{声源初定位$+$举手姿态检测}的寻找方式。将复杂的声学测向转化为高鲁棒性的视觉目标锁定
+        \end{enumerate}
+    \end{frame}
+
+    \begin{frame}{ROS 订阅端 (异步非阻塞) }
+        \begin{itemize}
+            \item 听觉触发源：\texttt{/micarrays/wakeup}
+            \begin{itemize}
+                \item 被动监听唤醒信号，触发状态流转
+            \end{itemize}
+            \item 物理安全锁：\texttt{/MediumSize/BodyHub/WalkingStatus}
+            \begin{itemize}
+                \item 高频缓存底盘状态，是开启视觉调用的安全红线
+            \end{itemize}
+            \item 原始视觉缓冲：\texttt{/chin\_camera/image}
+            \begin{itemize}
+                \item 维护长度为1的图像队列，保证最新高清帧可用
+            \end{itemize}
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{ROS 服务与发布端}
+        \begin{itemize}
+            \item 视觉服务端 (阻塞请求) 
+            \begin{itemize}
+                \item 目标锁定引擎：\texttt{/ros\_gesture\_node/gesture\_detect}
+                \item 传入图像帧，返回手势人体边界框坐标与尺寸
+            \end{itemize}
+            \item 运动控制端 (离散指令) 
+            \begin{itemize}
+                \item 视野索敌：\texttt{/MediumSize/BodyHub/HeadPosition}
+                \item 离散步态：\texttt{/gaitCommand}
+            \end{itemize}
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{有限状态机 (FSM) 总览}
+        核心四状态流水线：
+        \begin{enumerate}
+            \item STATE\_IDLE：待机监视
+            \item STATE\_VISION\_LOCK：静止视觉锁定
+            \item STATE\_BLIND\_WALK：离散盲走
+            \item STATE\_WAIT\_FOR\_STOP：等待步态停止
+        \end{enumerate}
+    \end{frame}
+
+    \begin{frame}{状态0：待机监视 (STATE\_IDLE) }
+        \begin{itemize}
+            \item 执行逻辑：底盘锁定，头部居中，静默更新最新图像帧
+            \item 流转条件：唤醒标志置为True → 进入视觉锁定状态
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{状态1：视觉锁定 (STATE\_VISION\_LOCK) }
+        \begin{itemize}
+            \item 前置检查：必须静止，行走中则跳过当前帧
+            \item 检测逻辑：调用手势检测，未找到则头部偏转，累计3次失败返回待机
+            \item 目标捕获：提取边界框，计算像素偏置$\Delta x$与面积占比$Area\_Ratio$
+            \item 流转：$Area\_Ratio>35\%$ → 到达；否则进入盲走
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{状态2与3：盲走与等待停止}
+        \begin{itemize}
+            \item STATE\_BLIND\_WALK (离散盲走) 
+            \begin{itemize}
+                \item 下发步数与转向角指令，立即切换至等待停止
+            \end{itemize}
+            \item STATE\_WAIT\_FOR\_STOP (阻塞监视) 
+            \begin{itemize}
+                \item 清空视觉缓存，仅轮询底盘状态
+                \item 恢复静止 → 切回视觉锁定
+            \end{itemize}
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{关键异常与防御机制}
+        \begin{enumerate}
+            \item 指令冲突防御：非IDLE状态无视新唤醒信号
+            \item 底层断联看门狗：底盘状态超时1.0秒强制刹车
+            \item 图像过期防御：帧延迟超0.5秒拒绝识别，防止撞墙
+        \end{enumerate}
+    \end{frame}
+
+
+    % 第三部分
     \section{基于LangChain架构的智能体}
 
     \begin{frame}{Langchain是什么？}
-        LangChain 是一个用于构建大语言模型（LLM）应用的主流开源框架，核心是连接模型、数据与工具，解决 LLM 孤立、无记忆、难执行复杂任务的问题。总而言之，可以用起开发agent从而实现 (在我们的设计中) 
+        LangChain 是一个用于构建大语言模型 (LLM) 应用的主流开源框架，核心是连接模型、数据与工具，解决 LLM 孤立、无记忆、难执行复杂任务的问题。总而言之，可以用起开发agent从而实现 (在我们的设计中) 
         如下功能
         \begin{center}
         \resizebox{\textwidth}{!}{
@@ -157,7 +259,7 @@
         \node[host] (host) {本地 Host\\ (Agent)};
         \node[cloud, right=4cm of host] (llm) {云端 LLM};
 
-        % ========== 云端内部流程（放在 LLM 右侧）==========
+        % ========== 云端内部流程 (放在 LLM 右侧) ==========
         % 流程组框
         \node[processgroup, right=1.2cm of llm] (processbox) {
             \begin{tikzpicture}
@@ -205,17 +307,28 @@
         \begin{enumerate}
             \item[(1).] CPU：$4$核$8$线程 (i5-8259U)，无独立显卡，本地推理大模型能力受限。
             \item[(2).] 内存与存储：仅$8\text{GB}$内存，$116\text{GB}$系统盘，难以加载或运行$7\text{B}$以上量级的LLM。
-            \item[(3).] 系统环境：Ubuntu 16.04（较老），Python 2.7/3.5为主，不直接支持多数新LLM框架。
-            \item[(4).] 开机后负载极低（CPU空闲$> 0.97$），主要运行MQTT消息服务器(EMQX)，适合作为调用云端LLM的轻量Agent。
+            \item[(3).] 系统环境：Ubuntu 16.04 (较老) ，Python 2.7/3.5为主，不直接支持多数新LLM框架。
+            \item[(4).] 开机后负载极低 (CPU空闲$> 0.97$) ，主要运行MQTT消息服务器(EMQX)，适合作为调用云端LLM的轻量Agent。
         \end{enumerate}
 
         可见，机器人的配置十分低端，根本无法进行本地图像识别；为了配置本地和云端LLM之间的通信，利用LangChain搭建一个简单的agent是一个可行的方案
 
     \end{frame}
 
-    \begin{frame}{具体的实现方案}
-        由于机器人全局环境为python3.8，而LangChain推荐的python环境为3.10$+$。故这里在Docker中创建相关环境
-        
+    \begin{frame}{初步的方案1}
+        由于机器人全局环境为python3.8，而LangChain推荐的python环境为3.10$+$，因此这里通过Docker构建了一个独立的运行环境：
+        \begin{enumerate}
+            \item[(1).] 基础系统为 Ubuntu 20.04，用于隔离机器人原有的老旧系统环境。
+            \item[(2).] 在容器内手动编译并安装 Python 3.10，满足 LangChain 对较新 Python 版本的要求。
+            \item[(3).] 安装 ROS Noetic 相关组件，保留与机器人现有消息通信和中间件对接的能力。
+            \item[(4).] 安装 LangChain、langchain-community 和 langchain-openai，作为本地 Host 调用云端 LLM 的核心依赖。
+        \end{enumerate}
+        因此，该 Docker 环境本质上是一个“ROS 通信 + Python 3.10 + LangChain”的轻量 Agent 运行容器，用于承载机器人端与云端大模型之间的交互逻辑。
+    \end{frame}
+
+    \begin{frame}{初步的方案2}
+        很容易想到分三步实现，第一步为与全局环境通信，我需要弄清楚如何将机器人截屏的图像传输到Docker环境中，第二步为将接受的到的图像上传到云端LLM，第三步为
+        将接收到的文本内容，通过调用相关节点，读出来。
     \end{frame}
 
 \end{document}
