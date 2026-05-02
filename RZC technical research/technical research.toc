@@ -1,2 +1,3 @@
-\beamer@sectionintoc {1}{基于异步状态机的离散视觉伺服靠近方案}{3}{0}{1}
-\beamer@sectionintoc {2}{基于LangChain架构的智能体}{12}{0}{2}
+\beamer@sectionintoc {1}{场景概述}{3}{0}{1}
+\beamer@sectionintoc {2}{基于异步状态机的离散视觉伺服靠近方案}{4}{0}{2}
+\beamer@sectionintoc {3}{基于LangChain架构的智能体}{13}{0}{3}
