@@ -1,79 +1,221 @@
 \documentclass{beamer}
-
-% 选择主题（有多种风格可选）
-\usetheme{Madrid}      % 主题
+\usepackage[utf8]{inputenc}
+\usetheme{Boadilla}      % 主题
 \usecolortheme{default} % 颜色主题
 
-% 中文支持（如果需要）
-\usepackage[UTF8]{ctex}
-
-% 其他常用包
-\usepackage{amsmath, amssymb}
+\usepackage{mathspec}
+\usepackage{amssymb}
+\usepackage{xcolor}
 \usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{caption}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{colortbl}
+
+\usepackage{tikz}
+\tikzset{x=10mm, y=10mm}
+\usetikzlibrary{arrows.meta, positioning, fit, backgrounds}
+
+\usepackage{listings}
+% 自定义列表环境
+\lstset{
+    numbers=left,           % 行号在左侧
+    % numbersep=5pt,          % 行号与代码的间距
+    %xleftmargin=0pt,        % 左边距 (行号从这里开始算) 
+    % xrightmargin=0pt,
+    frame=single,           % 添加边框 (可选) 
+    % framexleftmargin=0pt,
+    breaklines=true,
+    captionpos=b,           % 关键：将 caption 放在底部 (b = bottom) 
+    % aboveskip=10pt,         % 代码块上方间距
+    % belowskip=10pt,         % 代码块下方间距
+}
+
+\usepackage{makecell}
+\usepackage{setspace}
+\setstretch{1}
+
+\usepackage{fontspec}
+\usepackage{xeCJK}
+\setmainfont{Times New Roman}
+\setsansfont{Arial}
+\setmonofont{Courier New}
+\setCJKmainfont{Songti SC}[
+    AutoFakeBold=true,
+    AutoFakeSlant=true
+]
+\setCJKsansfont{PingFang SC}[
+    AutoFakeBold=true,
+    AutoFakeSlant=true
+]
+\setCJKmonofont{Songti SC}[
+    AutoFakeBold=true,
+    AutoFakeSlant=true
+]
+
+
 \usepackage{hyperref}
 
+% 设置正文大小（相当于全局基准）
+\setbeamerfont{normal text}{size=\small}   % 将正文设为 \small 大小
+
+% 设置各级标题大小
+\setbeamerfont{frametitle}{size=\Large}    % 每页标题用 \Large
+\setbeamerfont{title}{size=\huge}          % 首页大标题用 \huge
+\setbeamerfont{author}{size=\normalsize}   % 首页作者名用正常大小
+
+% 设置目录页字体大小
+\setbeamerfont{section in toc}{size=\normalsize}    % 一级目录用正常大小
+\setbeamerfont{subsection in toc}{size=\footnotesize} % 二级目录用小字
+
+% 为了让 \setbeamerfont{normal text} 生效，必须加上这句
+\renewcommand{\normalsize}{\usebeamerfont{normal text}\selectfont}
+
+% 目录风格
+\setbeamertemplate{section in toc}{
+  \leavevmode
+  \leftskip=0pt
+  (\inserttocsectionnumber).\ % 这里改成你想要的格式
+  \inserttocsection
+  \par
+}
+
+% 自定义顶栏
+\setbeamertemplate{headline}{
+  \leavevmode
+  \begin{beamercolorbox}[wd=\paperwidth,ht=2.5ex,dp=1.125ex]{section in head/foot}
+    \hspace{1em}%
+    \insertsectionhead
+    \hfill
+    \insertshorttitle  % 显示短标题，不会报错
+    \hspace*{1em}%
+  \end{beamercolorbox}
+}
+
 % 标题信息
-\title{Beamer幻灯片示例}
-\subtitle{用LaTeX制作演示文稿}
-\author{张三}
-\institute{某某大学}
+\title{声指令随 - EpochPoint}
+\subtitle{北京邮电大学智能机器人实验期末大作业}
+\author[BUPT]{
+  任志诚 2023212020
+  梁恒 2023123456
+  金泽林 2023212012
+}
+\institute[]{BUPT}
 \date{\today}
 
 \begin{document}
 
-% 标题页
-\begin{frame}
-    \titlepage
-\end{frame}
+    % 标题页
+    \begin{frame}
+        \titlepage
+    \end{frame}
 
-% 目录页
-\begin{frame}{目录}
-    \tableofcontents
-\end{frame}
+    % 目录页
+    \begin{frame}{Content}
+        \tableofcontents
+    \end{frame}
 
-% 第一部分
-\section{介绍}
+    % 第一部分
+    \section{基于LangChain架构的智能体}
 
-\begin{frame}{Beamer是什么？}
-    \begin{itemize}
-        \item 一个LaTeX的文档类
-        \item 用于制作演示幻灯片
-        \item 支持数学公式、图表等
-    \end{itemize}
-\end{frame}
+    \begin{frame}{Langchain是什么？}
+        LangChain 是一个用于构建大语言模型（LLM）应用的主流开源框架，核心是连接模型、数据与工具，解决 LLM 孤立、无记忆、难执行复杂任务的问题。总而言之，可以用起开发agent从而实现 (在我们的设计中) 
+        如下功能
+        \begin{center}
+        \resizebox{\textwidth}{!}{
+        \begin{tikzpicture}[
+            >=Stealth,
+            % 样式定义
+            host/.style={
+                rectangle, draw=blue!70!black, rounded corners, 
+                minimum height=2.2cm, minimum width=2.8cm, 
+                fill=blue!5, align=center,
+                font=\sffamily\bfseries
+            },
+            cloud/.style={
+                rectangle, draw=orange!70!black, rounded corners,
+                minimum height=2.2cm, minimum width=2.8cm,
+                fill=orange!5, align=center,
+                font=\sffamily\bfseries
+            },
+            process/.style={
+                rectangle, draw=gray!60, dashed, rounded corners=2pt,
+                minimum height=0.7cm, minimum width=2.8cm,
+                fill=white, align=center,
+                font=\sffamily\footnotesize
+            },
+            processgroup/.style={
+                rectangle, draw=gray!40, rounded corners,
+                inner sep=6pt, fill=gray!3, align=center
+            }
+        ]
 
-\section{核心功能}
+        % ========== 左右主体 ==========
+        \node[host] (host) {本地 Host\\ (Agent)};
+        \node[cloud, right=4cm of host] (llm) {云端 LLM};
 
-\begin{frame}{插入数学公式}
-    \begin{block}{欧拉公式}
-        \[ e^{i\pi} + 1 = 0 \]
-    \end{block}
-    
-    \begin{alertblock}{注意}
-        这是Beamer中最优美的公式之一。
-    \end{alertblock}
-\end{frame}
+        % ========== 云端内部流程（放在 LLM 右侧）==========
+        % 流程组框
+        \node[processgroup, right=1.2cm of llm] (processbox) {
+            \begin{tikzpicture}
+                \node[process] (p1) {图像接收};
+                \node[process, below=0.15cm of p1] (p2) {图文特征融合};
+                \node[process, below=0.15cm of p2] (p3) {LLM 语义理解};
+                \node[process, below=0.15cm of p3] (p4) {生成图像描述};
+                
+                % 流程连线
+                \draw[->, thick, gray!60] (p1) -- (p2);
+                \draw[->, thick, gray!60] (p2) -- (p3);
+                \draw[->, thick, gray!60] (p3) -- (p4);
+            \end{tikzpicture}
+        };
 
-\begin{frame}{插入图片}
-    \begin{figure}
-        \centering
-        \includegraphics[width=0.5\textwidth]{example-image}
-        \caption{示例图片}
-    \end{figure}
-\end{frame}
+        % 流程组标题
+        \node[above=0.3cm of processbox.north, font=\sffamily\small\color{gray!70!black}] 
+            {内部处理流程};
 
-\section{总结}
+        % 发送：Host -> LLM
+        \draw[->, thick, blue!70!black] 
+            (host.east) -- 
+            node[above, font=\sffamily\small] {发送 Image + Prompts} 
+            (llm.west);
 
-\begin{frame}{总结}
-    \begin{enumerate}
-        \item 简单易学
-        \item 专业美观
-        \item 稳定可靠
-    \end{enumerate}
-    
-    \vspace{1cm}
-    \centering
-    \textbf{谢谢观看！}
-\end{frame}
+        % 返回：LLM -> Host
+        \draw[<-, thick, red!70!black] 
+            (host.east) -- 
+            node[below, font=\sffamily\small] {返回图像解析内容} 
+            (llm.west);
+
+        % LLM 到流程组的交互箭头
+        \draw[->, thick, orange!70!black, dashed] 
+            (llm.east) -- 
+            node[above, font=\sffamily\small] {处理} 
+            (processbox.west);
+
+        \end{tikzpicture}
+        }
+    \end{center}
+    \end{frame}
+
+    \begin{frame}{使用LangChain的必要性}
+        调研机器人配置，得到如下信息：
+        \begin{enumerate}
+            \item[(1).] CPU：$4$核$8$线程 (i5-8259U)，无独立显卡，本地推理大模型能力受限。
+            \item[(2).] 内存与存储：仅$8\text{GB}$内存，$116\text{GB}$系统盘，难以加载或运行$7\text{B}$以上量级的LLM。
+            \item[(3).] 系统环境：Ubuntu 16.04（较老），Python 2.7/3.5为主，不直接支持多数新LLM框架。
+            \item[(4).] 开机后负载极低（CPU空闲$> 0.97$），主要运行MQTT消息服务器(EMQX)，适合作为调用云端LLM的轻量Agent。
+        \end{enumerate}
+
+        可见，机器人的配置十分低端，根本无法进行本地图像识别；为了配置本地和云端LLM之间的通信，利用LangChain搭建一个简单的agent是一个可行的方案
+
+    \end{frame}
+
+    \begin{frame}{具体的实现方案}
+        由于机器人全局环境为python3.8，而LangChain推荐的python环境为3.10$+$。故这里在Docker中创建相关环境
+        
+    \end{frame}
 
 \end{document}
