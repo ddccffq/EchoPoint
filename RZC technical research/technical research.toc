@@ -1,3 +1,4 @@
 \beamer@sectionintoc {1}{场景概述}{3}{0}{1}
 \beamer@sectionintoc {2}{基于异步状态机的离散视觉伺服靠近方案}{4}{0}{2}
-\beamer@sectionintoc {3}{基于LangChain架构的智能体}{13}{0}{3}
+\beamer@sectionintoc {3}{基于RGB-D空间射线的意图指引与目标捕获方案}{13}{0}{3}
+\beamer@sectionintoc {4}{基于LangChain架构的智能体}{24}{0}{4}

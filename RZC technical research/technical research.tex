@@ -244,6 +244,120 @@
         \end{enumerate}
     \end{frame}
 
+    \section{基于RGB-D空间射线的意图指引与目标捕获方案}
+
+    \begin{frame}{工程背景与物理约束}
+        初始需求：机器人到达用户附近后，依据用户手指指向，将头部转向目标物品并截图。
+        实际评估存在核心约束：
+        \begin{enumerate}
+            \item[(1).] 2D视觉空间降维灾难：单目RGB丢失深度信息，纯视觉深度估计误差大，指向精度不可控
+            \item[(2).] 脸部参照缺失与姿态抖动：近距离FOV受限，无眼部/肩部参照；手指生理性微颤导致远端射线放大偏移
+        \end{enumerate}
+    \end{frame}
+
+    \begin{frame}{架构重构决策}
+        为保证空间定位精度与动作平滑性，采用两项核心方案：
+        \begin{enumerate}
+            \item[(1).] 摒弃2D估计，采用\textbf{3D点云强相交}：使用RealSense RGB-D获取对齐彩色图与稠密点云，转化为严格3D射线与空间求交计算
+            \item[(2).] 摒弃视线参照，采用\textbf{食指局部自对齐}：使用食指MCP–TIP向量，结合\textbf{卡尔曼滤波}平滑关键点，抑制高频抖动
+        \end{enumerate}
+    \end{frame}
+
+    \begin{frame}{ROS系统接口映射规范}
+        主控节点 \texttt{module2\_attention\_node} 作为承上启下中枢，接管模块一控制权，为后续模块提供高质量目标切片。
+    \end{frame}
+
+    \begin{frame}{ROS订阅端（异步非阻塞）}
+        \begin{itemize}
+            \item RGB图像流：\texttt{/camera/color/image\_raw}
+            \begin{itemize}
+                \item 用于MediaPipe骨架提取与最终截图存档
+            \end{itemize}
+            \item 物理三维点云：\texttt{/camera/depth/color/points}
+            \begin{itemize}
+                \item 维护3D环境模型，为射线求交提供空间依据
+            \end{itemize}
+            \item 模块一握手信号：\texttt{/module1/interaction\_ready}
+            \begin{itemize}
+                \item 接收到达并停稳信号，激活本模块视觉管线
+            \end{itemize}
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{ROS服务端（阻塞控制）}
+        \begin{itemize}
+            \item 头部云台控制服务：\texttt{MediumSize/HeadController/HeadJointTrajectory}
+            \begin{itemize}
+                \item 传入Yaw、Pitch角度，阻塞调用确保头部到位停稳，避免运动模糊
+            \end{itemize}
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{有限状态机FSM总览}
+        本模块采用四状态流水线：
+        \begin{enumerate}
+            \item STATE\_STANDBY：静默待命
+            \item STATE\_RAY\_CASTING：骨架提取与空间射线投射
+            \item STATE\_TF\_SOLVING：坐标变换与逆运动学解算
+            \item STATE\_EXECUTE\_CAPTURE：运动闭环与截帧捕获
+        \end{enumerate}
+    \end{frame}
+
+    \begin{frame}{状态0：静默待命（STATE\_STANDBY）}
+        \begin{itemize}
+            \item 执行逻辑：视觉管线休眠，降低算力消耗，监听模块一就绪信号
+            \item 流转条件：收到 \texttt{interaction\_ready = True} → 进入射线投射状态
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{状态1：射线投射（STATE\_RAY\_CASTING）}
+        \begin{itemize}
+            \item 前置检查：RGB与点云时间戳错位≤100ms，否则丢弃
+            \item 执行流程：
+            \begin{enumerate}
+                \item 提取食指MCP与TIP的2D坐标
+                \item 映射得到相机坐标系下3D坐标
+                \item 滤波后生成3D指向向量 \( \vec{V}_{dir} = P_{tip} - P_{mcp} \)
+                \item 射线求交，获取目标点云质心 \( P_{target} \)
+            \end{enumerate}
+            \item 流转：解算有效 → 进入坐标变换；超时则语音提示
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{状态2：坐标变换与IK解算（STATE\_TF\_SOLVING）}
+        \begin{itemize}
+            \item 执行逻辑：
+            \begin{enumerate}
+                \item 通过ROS tf将目标点从相机坐标系转换至头部云台基座坐标系
+                \item 逆运动学求解云台角度：
+                \[
+                \begin{aligned}
+                \text{Yaw} &= \arctan2(Y_t, X_t) \\
+                \text{Pitch} &= \arctan2\Bigl(Z_t, \sqrt{X_t^2 + Y_t^2}\Bigr)
+                \end{aligned}
+                \]
+            \end{enumerate}
+            \item 流转：解算完成 → 进入执行捕获状态
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{状态3：执行与截图（STATE\_EXECUTE\_CAPTURE）}
+        \begin{itemize}
+            \item 下发Yaw、Pitch至头部控制器，阻塞等待到位
+            \item 延时0.5s消除机械震颤，清空缓存并截取静止清晰帧
+            \item 保存高清截图，发布任务完成标志
+            \item 流转：截图完成 → 回到待命状态
+        \end{itemize}
+    \end{frame}
+
+    \begin{frame}{关键异常与边界防御机制}
+        \begin{enumerate}
+            \item 射界逃逸防御：指向天空/超3m无效目标，拒绝IK解算
+            \item 关节物理限位：Pitch限制在\( -30^\circ \sim 45^\circ \)，超限截断保护舵机
+            \item 视觉防抖屏蔽：截图前清空缓存，仅取静止后首帧干净画面
+        \end{enumerate}
+    \end{frame}
+
 
     % 第三部分
     \section{基于LangChain架构的智能体}
