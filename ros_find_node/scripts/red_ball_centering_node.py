@@ -174,5 +174,5 @@ class RedBallCenteringNode(object):
 
 
 if __name__ == "__main__":
-    rospy.init_node("red_ball_centering_node")
+    rospy.init_node("ros_find_node")
     RedBallCenteringNode().run()
