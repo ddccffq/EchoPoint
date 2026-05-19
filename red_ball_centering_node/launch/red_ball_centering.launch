@@ -1,0 +1,27 @@
+<launch>
+  <arg name="image_topic" default="/camera/color/image_raw" />
+  <arg name="output_dir" default="$(find red_ball_centering_node)/snapshots" />
+
+  <node pkg="red_ball_centering_node"
+        type="red_ball_centering_node.py"
+        name="red_ball_centering_node"
+        output="screen">
+    <param name="image_topic" value="$(arg image_topic)" />
+    <param name="snapshot_url" value="http://localhost:8080/snapshot?topic=$(arg image_topic)" />
+    <param name="output_dir" value="$(arg output_dir)" />
+
+    <param name="center_x" value="320.0" />
+    <param name="center_y" value="240.0" />
+    <param name="tolerance_x" value="20.0" />
+    <param name="tolerance_y" value="20.0" />
+    <param name="stable_frames" value="8" />
+
+    <param name="pan_gain" value="0.01" />
+    <param name="tilt_gain" value="0.01" />
+    <param name="pan_min" value="-90.0" />
+    <param name="pan_max" value="90.0" />
+    <param name="tilt_min" value="-25.0" />
+    <param name="tilt_max" value="25.0" />
+    <param name="control_id" value="2" />
+  </node>
+</launch>
