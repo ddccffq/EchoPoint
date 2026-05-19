@@ -14,5 +14,6 @@ include_directories(${catkin_INCLUDE_DIRS})
 
 catkin_install_python(PROGRAMS
   scripts/test_node.py
+  src/listener.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
