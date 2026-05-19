@@ -10,7 +10,7 @@ import numpy as np
 import rospy
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image
-from std_msgs.msg import Float64, Float64MultiArray, String
+from std_msgs.msg import Bool, Float64, Float64MultiArray, String
 
 
 class Module1Master(object):
@@ -56,8 +56,13 @@ class Module1Master(object):
         self.hsv_lower2 = self._load_hsv_param("~hsv_lower2", [170, 80, 50])
         self.hsv_upper2 = self._load_hsv_param("~hsv_upper2", [180, 255, 255])
 
+        self.arrived_topic = rospy.get_param("~arrived_topic", "/module1/arrived")
+
         self.gait_pub = rospy.Publisher(
             self.gait_command_topic, Float64MultiArray, queue_size=2
+        )
+        self.arrived_pub = rospy.Publisher(
+            self.arrived_topic, Bool, queue_size=1, latch=True
         )
         rospy.Subscriber(self.wakeup_topic, String, self._wakeup_callback, queue_size=5)
         rospy.Subscriber(
@@ -196,6 +201,8 @@ class Module1Master(object):
                 rospy.loginfo("Target reached, saved frame to %s", self.capture_path)
             else:
                 rospy.logerr("Target reached, but failed to save %s", self.capture_path)
+            self.arrived_pub.publish(Bool(data=True))
+            rospy.loginfo("Published arrival signal on %s", self.arrived_topic)
             self._safe_to_idle()
             return
 
