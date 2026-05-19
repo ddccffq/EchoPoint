@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>ros_find_node</name>
+  <name>red_ball_centering_node</name>
   <version>0.0.1</version>
   <description>Center the robot head camera on a red ball marker and capture a snapshot.</description>
 

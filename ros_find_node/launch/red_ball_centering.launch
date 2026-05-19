@@ -1,10 +1,10 @@
 <launch>
   <arg name="image_topic" default="/camera/color/image_raw" />
-  <arg name="output_dir" default="$(find ros_find_node)/snapshots" />
+  <arg name="output_dir" default="$(find red_ball_centering_node)/snapshots" />
 
-  <node pkg="ros_find_node"
+  <node pkg="red_ball_centering_node"
         type="red_ball_centering_node.py"
-        name="ros_find_node"
+        name="red_ball_centering_node"
         output="screen">
     <param name="image_topic" value="$(arg image_topic)" />
     <param name="snapshot_url" value="http://localhost:8080/snapshot?topic=$(arg image_topic)" />

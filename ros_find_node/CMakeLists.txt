@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(ros_find_node)
+project(red_ball_centering_node)
 
 find_package(catkin REQUIRED COMPONENTS
   rospy

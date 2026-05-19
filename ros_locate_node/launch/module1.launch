@@ -1,0 +1,24 @@
+<launch>
+  <node pkg="ros_locate_node" type="module1_master.py" name="module1_master" output="screen">
+    <param name="image_topic"           value="/chin_camera/image" />
+    <param name="wakeup_topic"           value="/micarrays/wakeup" />
+    <param name="walking_status_topic"   value="/MediumSize/BodyHub/WalkingStatus" />
+    <param name="gait_command_topic"     value="/gaitCommand" />
+    <param name="arrived_topic"          value="/module1/arrived" />
+    <param name="tts_topic"              value="/aiui/text_to_speak" />
+    <param name="capture_path"           value="/tmp/target_captured.jpg" />
+
+    <param name="search_max_steps"       value="36" />
+    <param name="arrival_area_ratio"     value="0.35" />
+    <param name="min_area_ratio"         value="0.002" />
+    <param name="center_deadband_px"     value="35.0" />
+    <param name="theta_gain"             value="18.0" />
+    <param name="forward_gain"           value="0.25" />
+    <param name="min_forward_step"       value="0.02" />
+
+    <rosparam param="hsv_lower1">[0, 80, 50]</rosparam>
+    <rosparam param="hsv_upper1">[12, 255, 255]</rosparam>
+    <rosparam param="hsv_lower2">[170, 80, 50]</rosparam>
+    <rosparam param="hsv_upper2">[180, 255, 255]</rosparam>
+  </node>
+</launch>
