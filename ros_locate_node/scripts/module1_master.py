@@ -18,6 +18,12 @@ try:
 except ImportError:
     _TTS_AVAILABLE = False
 
+try:
+    from motion.bodyhub_client import BodyhubClient
+    _BODYHUB_AVAILABLE = True
+except ImportError:
+    _BODYHUB_AVAILABLE = False
+
 
 class Module1Master(object):
     STATE_IDLE = "STATE_IDLE"
@@ -41,6 +47,7 @@ class Module1Master(object):
         self.pending_sound_angle = None
         self.wait_seen_walking = False
         self.search_step_count = 0
+        self.wait_start_time = None
 
         self.image_topic = rospy.get_param("~image_topic", "/chin_camera/image")
         self.wakeup_topic = rospy.get_param("~wakeup_topic", "/micarrays/wakeup")
@@ -48,6 +55,9 @@ class Module1Master(object):
             "~walking_status_topic", "/MediumSize/BodyHub/WalkingStatus"
         )
         self.gait_command_topic = rospy.get_param("~gait_command_topic", "/gaitCommand")
+        self.request_gait_topic = rospy.get_param(
+            "~request_gait_topic", "/requestGaitCommand"
+        )
         self.capture_path = rospy.get_param("~capture_path", "/tmp/target_captured.jpg")
 
         self.arrival_area_ratio = float(rospy.get_param("~arrival_area_ratio", 0.35))
@@ -57,8 +67,10 @@ class Module1Master(object):
         self.forward_gain = float(rospy.get_param("~forward_gain", 0.25))
         self.min_forward_step = float(rospy.get_param("~min_forward_step", 0.02))
         self.search_max_steps = int(rospy.get_param("~search_max_steps", 36))
+        self.gait_handshake_timeout = float(rospy.get_param("~gait_handshake_timeout", 20.0))
+        self.wait_stop_timeout = float(rospy.get_param("~wait_stop_timeout", 10.0))
+        self.control_id = int(rospy.get_param("~control_id", 30))
 
-        # HSV defaults target a red/orange marker. Tune via rosparam for the actual target.
         self.hsv_lower1 = self._load_hsv_param("~hsv_lower1", [0, 80, 50])
         self.hsv_upper1 = self._load_hsv_param("~hsv_upper1", [12, 255, 255])
         self.hsv_lower2 = self._load_hsv_param("~hsv_lower2", [170, 80, 50])
@@ -94,11 +106,76 @@ class Module1Master(object):
         else:
             rospy.logwarn("ros_AIUI_node not in dependency, TTS voice prompts disabled")
 
+        self._bodyhub = None
+        self._bodyhub_ready = False
+        if _BODYHUB_AVAILABLE:
+            try:
+                self._bodyhub = BodyhubClient(self.control_id)
+                rospy.loginfo(
+                    "BodyhubClient created with control_id=%d", self.control_id
+                )
+            except Exception as exc:
+                rospy.logerr("Failed to create BodyhubClient: %s", exc)
+                self._bodyhub = None
+        else:
+            rospy.logwarn(
+                "leju_lib_pkg not available, BodyHub state management disabled"
+            )
+
+        rospy.on_shutdown(self._on_shutdown)
+
         rospy.loginfo(
-            "module1_master initialized: search_max_steps=%d, arrival_area_ratio=%.2f",
+            "module1_master initialized: search_max_steps=%d, arrival_area_ratio=%.2f, "
+            "control_id=%d, bodyhub=%s",
             self.search_max_steps,
             self.arrival_area_ratio,
+            self.control_id,
+            "yes" if self._bodyhub else "no",
         )
+
+    def _on_shutdown(self):
+        rospy.loginfo("module1_master shutting down, releasing BodyHub control")
+        self._bodyhub_reset(force=True)
+
+    def _bodyhub_walk(self):
+        if self._bodyhub is None:
+            rospy.logwarn_throttle(5.0, "BodyhubClient not available, skipping walk()")
+            return True
+
+        try:
+            result = self._bodyhub.reset()
+            if result is not True:
+                result = self._bodyhub.reset(root=True)
+                if result is not True:
+                    rospy.logerr("BodyHub reset failed (result=%s), forcing", result)
+                    self._bodyhub.reset(root=True)
+
+            result = self._bodyhub.ready()
+            if result is not True:
+                rospy.logerr("BodyHub ready() failed (result=%s)", result)
+                return False
+
+            result = self._bodyhub.walk()
+            if result is not True:
+                rospy.logerr("BodyHub walk() failed (result=%s)", result)
+                return False
+
+            self._bodyhub_ready = True
+            rospy.loginfo("BodyHub state machine: walking")
+            return True
+        except Exception as exc:
+            rospy.logerr("BodyHub walk() exception: %s", exc)
+            return False
+
+    def _bodyhub_reset(self, force=False):
+        if self._bodyhub is None:
+            return
+        try:
+            self._bodyhub.reset(root=force)
+            self._bodyhub_ready = False
+            rospy.loginfo("BodyHub reset (force=%s)", force)
+        except Exception as exc:
+            rospy.logwarn("BodyHub reset exception: %s", exc)
 
     def _speak(self, text):
         if not self._tts_available or self._tts_client is None:
@@ -133,6 +210,12 @@ class Module1Master(object):
                 return
             self.pending_sound_angle = self._normalize_angle(angle)
             self.search_step_count = 0
+
+        if not self._bodyhub_walk():
+            rospy.logerr("Cannot transition BodyHub to walking, wakeup ignored")
+            return
+
+        with self.lock:
             self.state = self.STATE_TURN_TO_SOUND
         rospy.loginfo("Wakeup angle %.2f deg accepted", angle)
 
@@ -288,6 +371,21 @@ class Module1Master(object):
             self._enter_wait_for_stop(self.STATE_VISION_LOCK)
 
     def _handle_wait_for_stop(self):
+        now = rospy.Time.now()
+
+        with self.lock:
+            if self.wait_start_time is None:
+                self.wait_start_time = now
+
+        elapsed = (now - self.wait_start_time).to_sec()
+        if elapsed > self.wait_stop_timeout:
+            rospy.logwarn(
+                "WAIT_FOR_STOP timeout (%.1fs) without walking cycle, assuming completed",
+                elapsed,
+            )
+            with self.lock:
+                self.wait_seen_walking = True
+
         if self._is_walking():
             with self.lock:
                 self.wait_seen_walking = True
@@ -306,6 +404,7 @@ class Module1Master(object):
         with self.lock:
             self.state = self.next_after_stop
             self.wait_seen_walking = False
+            self.wait_start_time = None
         rospy.loginfo("Walking stopped; switching to %s", self._get_state())
 
     def _detect_target(self, frame):
@@ -362,6 +461,17 @@ class Module1Master(object):
             rospy.logwarn("Zero gait command suppressed")
             return False
 
+        try:
+            rospy.wait_for_message(
+                self.request_gait_topic, Bool, timeout=self.gait_handshake_timeout
+            )
+            rospy.loginfo("requestGaitCommand handshake received")
+        except rospy.ROSException:
+            rospy.logwarn(
+                "requestGaitCommand timeout (%.1fs), publishing gait anyway",
+                self.gait_handshake_timeout,
+            )
+
         self.gait_pub.publish(Float64MultiArray(data=[safe_dx, safe_dy, safe_theta]))
         rospy.loginfo("Published gait [dx=%.3f, dy=%.3f, theta=%.3f]", safe_dx, safe_dy, safe_theta)
         return True
@@ -396,16 +506,19 @@ class Module1Master(object):
             if next_after_stop is not None:
                 self.next_after_stop = next_after_stop
             self.wait_seen_walking = self.walking_status > 0.5
+            self.wait_start_time = rospy.Time.now()
             self.state = self.STATE_WAIT_FOR_STOP
         rospy.loginfo("[FSM] -> STATE_WAIT_FOR_STOP (next=%s)", self.next_after_stop)
 
     def _safe_to_idle(self):
+        self._bodyhub_reset()
         with self.lock:
             self.state = self.STATE_IDLE
             self.next_after_stop = self.STATE_VISION_LOCK
             self.pending_sound_angle = None
             self.wait_seen_walking = False
             self.search_step_count = 0
+            self.wait_start_time = None
         rospy.loginfo("[FSM] -> STATE_IDLE")
 
     @staticmethod
