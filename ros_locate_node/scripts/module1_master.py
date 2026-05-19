@@ -12,6 +12,12 @@ from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, Float64, Float64MultiArray, String
 
+try:
+    from ros_AIUI_node.srv import textToSpeak
+    _TTS_AVAILABLE = True
+except ImportError:
+    _TTS_AVAILABLE = False
+
 
 class Module1Master(object):
     STATE_IDLE = "STATE_IDLE"
@@ -34,6 +40,7 @@ class Module1Master(object):
         self.latest_frame_stamp = None
         self.pending_sound_angle = None
         self.wait_seen_walking = False
+        self.search_step_count = 0
 
         self.image_topic = rospy.get_param("~image_topic", "/chin_camera/image")
         self.wakeup_topic = rospy.get_param("~wakeup_topic", "/micarrays/wakeup")
@@ -49,6 +56,7 @@ class Module1Master(object):
         self.theta_gain = float(rospy.get_param("~theta_gain", 18.0))
         self.forward_gain = float(rospy.get_param("~forward_gain", 0.25))
         self.min_forward_step = float(rospy.get_param("~min_forward_step", 0.02))
+        self.search_max_steps = int(rospy.get_param("~search_max_steps", 36))
 
         # HSV defaults target a red/orange marker. Tune via rosparam for the actual target.
         self.hsv_lower1 = self._load_hsv_param("~hsv_lower1", [0, 80, 50])
@@ -57,6 +65,7 @@ class Module1Master(object):
         self.hsv_upper2 = self._load_hsv_param("~hsv_upper2", [180, 255, 255])
 
         self.arrived_topic = rospy.get_param("~arrived_topic", "/module1/arrived")
+        self.tts_topic = rospy.get_param("~tts_topic", "/aiui/text_to_speak")
 
         self.gait_pub = rospy.Publisher(
             self.gait_command_topic, Float64MultiArray, queue_size=2
@@ -69,6 +78,39 @@ class Module1Master(object):
             self.walking_status_topic, Float64, self._walking_status_callback, queue_size=5
         )
         rospy.Subscriber(self.image_topic, Image, self._image_callback, queue_size=1)
+
+        self._tts_client = None
+        self._tts_available = False
+        if _TTS_AVAILABLE:
+            try:
+                rospy.wait_for_service(self.tts_topic, timeout=3.0)
+                self._tts_client = rospy.ServiceProxy(self.tts_topic, textToSpeak)
+                self._tts_available = True
+                rospy.loginfo("TTS service %s is available", self.tts_topic)
+            except rospy.ROSException:
+                rospy.logwarn(
+                    "TTS service %s not available, voice prompts disabled", self.tts_topic
+                )
+        else:
+            rospy.logwarn("ros_AIUI_node not in dependency, TTS voice prompts disabled")
+
+        rospy.loginfo(
+            "module1_master initialized: search_max_steps=%d, arrival_area_ratio=%.2f",
+            self.search_max_steps,
+            self.arrival_area_ratio,
+        )
+
+    def _speak(self, text):
+        if not self._tts_available or self._tts_client is None:
+            rospy.logwarn("TTS skip (unavailable): %s", text)
+            return
+        try:
+            self._tts_client(text)
+            rospy.loginfo("TTS: %s", text)
+        except rospy.ServiceException as exc:
+            rospy.logwarn("TTS service call failed: %s", exc)
+        except rospy.ROSException as exc:
+            rospy.logwarn("TTS ros exception: %s", exc)
 
     def _load_hsv_param(self, name, default):
         value = rospy.get_param(name, default)
@@ -90,6 +132,7 @@ class Module1Master(object):
                 rospy.logwarn("Wakeup ignored while state=%s", self.state)
                 return
             self.pending_sound_angle = self._normalize_angle(angle)
+            self.search_step_count = 0
             self.state = self.STATE_TURN_TO_SOUND
         rospy.loginfo("Wakeup angle %.2f deg accepted", angle)
 
@@ -151,7 +194,9 @@ class Module1Master(object):
         if angle is None or abs(angle) <= 1.0:
             with self.lock:
                 self.pending_sound_angle = None
+                self.search_step_count = 0
                 self.state = self.STATE_VISION_LOCK
+            rospy.loginfo("[FSM] -> STATE_VISION_LOCK (sound angle cleared)")
             return
 
         step_theta = self._clamp(angle, -self.MAX_THETA, self.MAX_THETA)
@@ -179,10 +224,32 @@ class Module1Master(object):
 
         target = self._detect_target(frame)
         if target is None:
-            rospy.logwarn_throttle(1.0, "No target color blob found; rotating slowly")
+            with self.lock:
+                self.search_step_count += 1
+                current_count = self.search_step_count
+
+            if current_count > self.search_max_steps:
+                rospy.logwarn(
+                    "Search limit reached (%d steps), giving up", current_count
+                )
+                self._speak("未发现目标")
+                with self.lock:
+                    self.search_step_count = 0
+                self._safe_to_idle()
+                return
+
+            rospy.logwarn_throttle(
+                1.0,
+                "No target found, rotating search step %d/%d",
+                current_count,
+                self.search_max_steps,
+            )
             if self._publish_gait(0.0, 0.0, 5.0):
                 self._enter_wait_for_stop(self.STATE_VISION_LOCK)
             return
+
+        with self.lock:
+            self.search_step_count = 0
 
         cx, cy, area_ratio = target
         height, width = frame.shape[:2]
@@ -203,6 +270,7 @@ class Module1Master(object):
                 rospy.logerr("Target reached, but failed to save %s", self.capture_path)
             self.arrived_pub.publish(Bool(data=True))
             rospy.loginfo("Published arrival signal on %s", self.arrived_topic)
+            self._speak("进行下一步吧")
             self._safe_to_idle()
             return
 
@@ -321,6 +389,7 @@ class Module1Master(object):
             self.state = state
             if next_after_stop is not None:
                 self.next_after_stop = next_after_stop
+        rospy.loginfo("[FSM] -> %s", state)
 
     def _enter_wait_for_stop(self, next_after_stop=None):
         with self.lock:
@@ -328,6 +397,7 @@ class Module1Master(object):
                 self.next_after_stop = next_after_stop
             self.wait_seen_walking = self.walking_status > 0.5
             self.state = self.STATE_WAIT_FOR_STOP
+        rospy.loginfo("[FSM] -> STATE_WAIT_FOR_STOP (next=%s)", self.next_after_stop)
 
     def _safe_to_idle(self):
         with self.lock:
@@ -335,6 +405,8 @@ class Module1Master(object):
             self.next_after_stop = self.STATE_VISION_LOCK
             self.pending_sound_angle = None
             self.wait_seen_walking = False
+            self.search_step_count = 0
+        rospy.loginfo("[FSM] -> STATE_IDLE")
 
     @staticmethod
     def _clamp(value, low, high):
