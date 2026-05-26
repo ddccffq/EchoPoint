@@ -28,6 +28,9 @@
   <!-- 如果你在代码里 import 了 ros_AIUI_node.srv 的 textToSpeak，建议加上 -->
   <exec_depend>ros_AIUI_node</exec_depend>
 
+  <!-- 用于在 rosrun/catkin_install_python 环境中定位本包路径 -->
+  <exec_depend>rospkg</exec_depend>
+
   <!-- 若你要把 Image 转 cv2，需要 cv_bridge -->
   <build_depend>cv_bridge</build_depend>
   <exec_depend>cv_bridge</exec_depend>
