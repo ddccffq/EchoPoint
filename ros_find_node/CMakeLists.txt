@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(red_ball_centering_node)
+project(ros_find_node)
 
 find_package(catkin REQUIRED COMPONENTS
   rospy
@@ -7,6 +7,8 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   bodyhub
   ros_vision_node
+  ros_AIUI_node
+  std_srvs
 )
 
 catkin_package()
