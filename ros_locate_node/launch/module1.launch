@@ -5,11 +5,11 @@
     <param name="walking_status_topic"    value="/MediumSize/BodyHub/WalkingStatus" />
     <param name="gait_command_topic"      value="/gaitCommand" />
     <param name="request_gait_topic"      value="/requestGaitCommand" />
-    <param name="arrived_topic"           value="/module1/arrived" />
     <param name="tts_topic"               value="/aiui/text_to_speak" />
     <param name="capture_path"            value="/tmp/target_captured.jpg" />
 
     <param name="control_id"              value="30" />
+    <param name="module2_timeout"          value="60.0" />
     <param name="gait_handshake_timeout"  value="20.0" />
     <param name="wait_stop_timeout"       value="10.0" />
 

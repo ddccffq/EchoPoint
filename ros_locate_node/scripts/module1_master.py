@@ -11,6 +11,7 @@ import rospy
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, Float64, Float64MultiArray, String
+from std_srvs.srv import SetBool
 
 try:
     from ros_AIUI_node.srv import textToSpeak
@@ -70,20 +71,17 @@ class Module1Master(object):
         self.gait_handshake_timeout = float(rospy.get_param("~gait_handshake_timeout", 20.0))
         self.wait_stop_timeout = float(rospy.get_param("~wait_stop_timeout", 10.0))
         self.control_id = int(rospy.get_param("~control_id", 30))
+        self.module2_timeout = float(rospy.get_param("~module2_timeout", 60.0))
 
         self.hsv_lower1 = self._load_hsv_param("~hsv_lower1", [0, 80, 50])
         self.hsv_upper1 = self._load_hsv_param("~hsv_upper1", [12, 255, 255])
         self.hsv_lower2 = self._load_hsv_param("~hsv_lower2", [170, 80, 50])
         self.hsv_upper2 = self._load_hsv_param("~hsv_upper2", [180, 255, 255])
 
-        self.arrived_topic = rospy.get_param("~arrived_topic", "/module1/arrived")
         self.tts_topic = rospy.get_param("~tts_topic", "/aiui/text_to_speak")
 
         self.gait_pub = rospy.Publisher(
             self.gait_command_topic, Float64MultiArray, queue_size=2
-        )
-        self.arrived_pub = rospy.Publisher(
-            self.arrived_topic, Bool, queue_size=1, latch=True
         )
         rospy.Subscriber(self.wakeup_topic, String, self._wakeup_callback, queue_size=5)
         rospy.Subscriber(
@@ -188,6 +186,29 @@ class Module1Master(object):
             rospy.logwarn("TTS service call failed: %s", exc)
         except rospy.ROSException as exc:
             rospy.logwarn("TTS ros exception: %s", exc)
+
+    def _call_module2_and_wait(self):
+        rospy.loginfo("Waiting for module2 service /module2/done...")
+        try:
+            rospy.wait_for_service("/module2/done", timeout=3.0)
+        except rospy.ROSException:
+            rospy.logwarn("Module2 service /module2/done not started within 3s, skipping")
+            return
+
+        client = rospy.ServiceProxy("/module2/done", SetBool)
+        try:
+            resp = client(True)
+            if resp.success:
+                rospy.loginfo("Module2 & 3 completed successfully: %s", resp.message)
+            else:
+                rospy.logwarn("Module2 returned failure: %s", resp.message)
+        except rospy.ROSException:
+            rospy.logwarn(
+                "Module2 service timeout (%.1fs), proceeding to idle",
+                self.module2_timeout,
+            )
+        except rospy.ServiceException as exc:
+            rospy.logwarn("Module2 service call failed: %s", exc)
 
     def _load_hsv_param(self, name, default):
         value = rospy.get_param(name, default)
@@ -359,9 +380,8 @@ class Module1Master(object):
                 rospy.loginfo("Target reached, saved frame to %s", self.capture_path)
             else:
                 rospy.logerr("Target reached, but failed to save %s", self.capture_path)
-            self.arrived_pub.publish(Bool(data=True))
-            rospy.loginfo("Published arrival signal on %s", self.arrived_topic)
             self._speak("进行下一步吧")
+            self._call_module2_and_wait()
             self._safe_to_idle()
             return
 
