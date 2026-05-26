@@ -10,7 +10,10 @@ from urllib.request import urlopen
 import rospy
 from bodyhub.msg import JointControlPoint
 from bodyhub.srv import SrvTLSstring
+from ros_AIUI_node.srv import SrvWakeupMute, textToSpeakMultipleOptions
 from ros_vision_node.srv import BallDetectInAreaSrv
+from std_msgs.msg import String
+from std_srvs.srv import Empty, SetBool
 
 
 class RedBallCenteringNode(object):
@@ -34,6 +37,19 @@ class RedBallCenteringNode(object):
         self.stable_frames = int(rospy.get_param("~stable_frames", 8))
         self.max_lost_frames = int(rospy.get_param("~max_lost_frames", 30))
 
+        self.enable_search = bool(rospy.get_param("~enable_search", True))
+        self.search_start_frames = int(rospy.get_param("~search_start_frames", 3))
+        self.search_step_frames = int(rospy.get_param("~search_step_frames", 3))
+        self.search_pan_min = float(rospy.get_param("~search_pan_min", -60.0))
+        self.search_pan_max = float(rospy.get_param("~search_pan_max", 60.0))
+        self.search_pan_step = abs(float(rospy.get_param("~search_pan_step", 8.0)))
+        self.search_tilt_levels = rospy.get_param("~search_tilt_levels", [-10.0, 0.0, 10.0])
+        if not self.search_tilt_levels:
+            self.search_tilt_levels = [0.0]
+        self.search_tilt_levels = [float(level) for level in self.search_tilt_levels]
+        self.search_direction = 1.0
+        self.search_tilt_index = 0
+
         self.pan_gain = float(rospy.get_param("~pan_gain", 0.01))
         self.tilt_gain = float(rospy.get_param("~tilt_gain", 0.01))
         self.pan_min = float(rospy.get_param("~pan_min", -90.0))
@@ -49,9 +65,31 @@ class RedBallCenteringNode(object):
         self.capture_on_centered = bool(rospy.get_param("~capture_on_centered", True))
         self.exit_after_capture = bool(rospy.get_param("~exit_after_capture", True))
 
+        self.enable_voice_commands = bool(rospy.get_param("~enable_voice_commands", True))
+        self.tts_service = rospy.get_param("~tts_service", "/aiui/text_to_speak_multiple_options")
+        self.speech_request_service = rospy.get_param("~speech_request_service", "/aiui/wakeup_mute")
+        self.speech_result_topic = rospy.get_param("~speech_result_topic", "/aiui/iat")
+        self.stop_recording_service = rospy.get_param("~stop_recording_service", "/aiui/stop_recording")
+        self.pause_head_sound_service = rospy.get_param(
+            "~pause_head_toward_sound_service", "/aiui/pause_head_toward_sound"
+        )
+        self.finish_signal_topic = rospy.get_param(
+            "~finish_signal_topic", "/ros_find_node/finish_signal"
+        )
+        self.finish_signal_text = rospy.get_param("~finish_signal_text", "start_recognition")
+        self.speech_timeout = float(rospy.get_param("~speech_timeout", 8.0))
+        self.screenshot_done_text = rospy.get_param("~screenshot_done_text", "截图完毕")
+        self.restart_command = rospy.get_param("~restart_command", "重新截图")
+        self.finish_command = rospy.get_param("~finish_command", "开始识别")
+        self.tts_vcn = rospy.get_param("~tts_vcn", "qige")
+        self.tts_speed = int(rospy.get_param("~tts_speed", 50))
+        self.tts_pitch = int(rospy.get_param("~tts_pitch", 50))
+        self.tts_volume = int(rospy.get_param("~tts_volume", 50))
+
         self.head_pub = rospy.Publisher(
             "/MediumSize/BodyHub/HeadPosition", JointControlPoint, queue_size=10
         )
+        self.finish_pub = rospy.Publisher(self.finish_signal_topic, String, queue_size=1)
         self.detect_ball = rospy.ServiceProxy(self.vision_service, BallDetectInAreaSrv)
 
     def update_control_id(self):
@@ -74,6 +112,107 @@ class RedBallCenteringNode(object):
         msg.positions = [self.pan, -self.tilt]
         msg.mainControlID = self.control_id
         self.head_pub.publish(msg)
+
+    def normalize_command(self, text):
+        for punctuation in ["，", "。", "？", "！", "：", "“", "”", "《", "》", "；", "、", " ", "\t", "\n"]:
+            text = text.replace(punctuation, "")
+        return text
+
+    def set_head_sound_paused(self, is_paused):
+        try:
+            rospy.wait_for_service(self.pause_head_sound_service, timeout=1.0)
+            rospy.ServiceProxy(self.pause_head_sound_service, SetBool)(is_paused)
+        except Exception as err:
+            rospy.logdebug("Could not change head-toward-sound status: %s", err)
+
+    def speak(self, text):
+        if not self.enable_voice_commands or not text:
+            return
+        try:
+            rospy.wait_for_service(self.tts_service, timeout=2.0)
+            client = rospy.ServiceProxy(self.tts_service, textToSpeakMultipleOptions)
+            client(text, self.tts_vcn, self.tts_speed, self.tts_pitch, self.tts_volume)
+        except Exception as err:
+            rospy.logwarn("Text-to-speech failed: %s", err)
+
+    def listen_once(self):
+        self.set_head_sound_paused(True)
+        try:
+            rospy.wait_for_service(self.speech_request_service, timeout=2.0)
+            rospy.ServiceProxy(self.speech_request_service, SrvWakeupMute)(False)
+            msg = rospy.wait_for_message(
+                self.speech_result_topic, String, timeout=self.speech_timeout
+            )
+            return self.normalize_command(msg.data)
+        except Exception as err:
+            rospy.logwarn("Voice command timeout or failed: %s", err)
+            try:
+                rospy.wait_for_service(self.stop_recording_service, timeout=1.0)
+                rospy.ServiceProxy(self.stop_recording_service, Empty)()
+            except Exception:
+                pass
+            return ""
+        finally:
+            self.set_head_sound_paused(False)
+
+    def wait_for_next_action(self):
+        if not self.enable_voice_commands:
+            return "finish" if self.exit_after_capture else "restart"
+
+        while not rospy.is_shutdown():
+            rospy.loginfo(
+                "Waiting for voice command: %s / %s",
+                self.restart_command,
+                self.finish_command,
+            )
+            command = self.listen_once()
+            if not command:
+                continue
+            rospy.loginfo("Voice command: %s", command)
+            if self.restart_command in command:
+                return "restart"
+            if self.finish_command in command:
+                return "finish"
+            rospy.loginfo("Ignored voice command: %s", command)
+        return "finish"
+
+    def publish_finish_signal(self):
+        msg = String()
+        msg.data = self.finish_signal_text
+        self.finish_pub.publish(msg)
+        rospy.loginfo(
+            "Published finish signal on %s: %s",
+            self.finish_signal_topic,
+            self.finish_signal_text,
+        )
+
+    def search_for_ball(self, lost_count):
+        if not self.enable_search or lost_count < self.search_start_frames:
+            return
+        if (lost_count - self.search_start_frames) % self.search_step_frames != 0:
+            return
+
+        next_pan = self.pan + self.search_direction * self.search_pan_step
+        if next_pan > self.search_pan_max:
+            next_pan = self.search_pan_max
+            self.search_direction = -1.0
+            self.search_tilt_index = (self.search_tilt_index + 1) % len(self.search_tilt_levels)
+        elif next_pan < self.search_pan_min:
+            next_pan = self.search_pan_min
+            self.search_direction = 1.0
+            self.search_tilt_index = (self.search_tilt_index + 1) % len(self.search_tilt_levels)
+
+        self.pan = self.clamp(next_pan, self.pan_min, self.pan_max)
+        self.tilt = self.clamp(
+            self.search_tilt_levels[self.search_tilt_index], self.tilt_min, self.tilt_max
+        )
+        rospy.loginfo(
+            "Searching red ball: lost_frames=%d, head=(%.2f, %.2f)",
+            lost_count,
+            self.pan,
+            self.tilt,
+        )
+        self.publish_head()
 
     def get_ball_center(self):
         try:
@@ -124,6 +263,7 @@ class RedBallCenteringNode(object):
                 stable_count = 0
                 if lost_count % self.max_lost_frames == 0:
                     rospy.logwarn("Red ball not found. Check camera view and lighting.")
+                self.search_for_ball(lost_count)
                 rate.sleep()
                 continue
 
@@ -151,8 +291,18 @@ class RedBallCenteringNode(object):
                         time.sleep(0.5)
                         try:
                             self.capture_snapshot()
+                            self.speak(self.screenshot_done_text)
                         except Exception as err:
                             rospy.logerr("Snapshot failed: %s", err)
+
+                    next_action = self.wait_for_next_action()
+                    if next_action == "restart":
+                        rospy.loginfo("Restarting red ball recognition.")
+                        stable_count = 0
+                        lost_count = 0
+                        continue
+
+                    self.publish_finish_signal()
                     if self.exit_after_capture:
                         return
                     stable_count = 0
