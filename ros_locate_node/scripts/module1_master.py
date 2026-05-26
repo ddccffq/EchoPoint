@@ -208,7 +208,7 @@ class Module1Master(object):
             if self.state != self.STATE_IDLE:
                 rospy.logwarn("Wakeup ignored while state=%s", self.state)
                 return
-            self.pending_sound_angle = self._normalize_angle(angle)
+            self.pending_sound_angle = -self._normalize_angle(angle)
             self.search_step_count = 0
 
         if not self._bodyhub_walk():
