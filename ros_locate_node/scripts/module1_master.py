@@ -211,6 +211,14 @@ class Module1Master(object):
             self.pending_sound_angle = -self._normalize_angle(angle)
             self.search_step_count = 0
 
+        pending = self.pending_sound_angle
+        rospy.loginfo(
+            "[WAKEUP] raw_angle=%.2f, normalized=%.2f, pending(negated)=%.2f",
+            angle,
+            self._normalize_angle(angle),
+            pending,
+        )
+
         if not self._bodyhub_walk():
             rospy.logerr("Cannot transition BodyHub to walking, wakeup ignored")
             return
