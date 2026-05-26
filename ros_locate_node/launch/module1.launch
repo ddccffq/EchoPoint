@@ -1,6 +1,6 @@
 <launch>
   <node pkg="ros_locate_node" type="module1_master.py" name="module1_master" output="screen">
-    <param name="image_topic"             value="/chin_camera/image" />
+    <param name="image_topic"             value="/camera/color/image_raw" />
     <param name="wakeup_topic"            value="/micarrays/wakeup" />
     <param name="walking_status_topic"    value="/MediumSize/BodyHub/WalkingStatus" />
     <param name="gait_command_topic"      value="/gaitCommand" />
