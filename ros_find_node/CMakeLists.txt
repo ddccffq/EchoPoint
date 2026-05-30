@@ -5,6 +5,7 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   std_msgs
   sensor_msgs
+  cv_bridge
   bodyhub
   ros_vision_node
   ros_AIUI_node
@@ -26,6 +27,7 @@ catkin_package(
 
 catkin_install_python(PROGRAMS
   scripts/red_ball_centering_node.py
+  scripts/pointing_centering_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
