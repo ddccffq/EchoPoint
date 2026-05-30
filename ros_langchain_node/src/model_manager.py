@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Union, List, Dict, Optional
 
 import requests
 import base64
@@ -57,12 +57,12 @@ class ModelManagerLM:
 
     def chat(
         self,
-        prompt: str | list[dict],
+        prompt: Union[str, List[Dict]],
         temperature: float,
         stream: bool,
         max_output_tokens: int,
-        system_prompt: str | None = None,
-        store: bool = False
+        system_prompt: Optional[str] = None,
+        store: bool = False,
     ) -> Any:
         if not self.instance_id:
             raise RuntimeError(
