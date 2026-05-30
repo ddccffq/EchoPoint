@@ -8,10 +8,21 @@ find_package(catkin REQUIRED COMPONENTS
   bodyhub
   ros_vision_node
   ros_AIUI_node
+  ros_langchain_node
   std_srvs
+  message_generation
 )
 
-catkin_package()
+add_service_files(
+  FILES
+  StartFind.srv
+)
+
+generate_messages()
+
+catkin_package(
+  CATKIN_DEPENDS message_runtime
+)
 
 catkin_install_python(PROGRAMS
   scripts/red_ball_centering_node.py

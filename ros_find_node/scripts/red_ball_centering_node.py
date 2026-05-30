@@ -3,6 +3,7 @@
 
 import json
 import os
+import threading
 import time
 from datetime import datetime
 from urllib.request import urlopen
@@ -11,7 +12,9 @@ import rospy
 from bodyhub.msg import JointControlPoint
 from bodyhub.srv import SrvTLSstring
 from ros_AIUI_node.srv import SrvWakeupMute, textToSpeakMultipleOptions
+from ros_find_node.srv import StartFind, StartFindResponse
 from ros_vision_node.srv import BallDetectInAreaSrv
+from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
 
@@ -65,6 +68,9 @@ class RedBallCenteringNode(object):
         self.capture_on_centered = bool(rospy.get_param("~capture_on_centered", True))
         self.exit_after_capture = bool(rospy.get_param("~exit_after_capture", True))
 
+        self.wait_for_start_service = bool(rospy.get_param("~wait_for_start_service", True))
+        self.start_service = rospy.get_param("~start_service", "/ros_find_node/start")
+
         self.enable_voice_commands = bool(rospy.get_param("~enable_voice_commands", True))
         self.tts_service = rospy.get_param("~tts_service", "/aiui/text_to_speak_multiple_options")
         self.speech_request_service = rospy.get_param("~speech_request_service", "/aiui/wakeup_mute")
@@ -77,6 +83,13 @@ class RedBallCenteringNode(object):
             "~finish_signal_topic", "/ros_find_node/finish_signal"
         )
         self.finish_signal_text = rospy.get_param("~finish_signal_text", "start_recognition")
+        self.enable_finish_topic = bool(rospy.get_param("~enable_finish_topic", False))
+        self.describe_image_service = rospy.get_param(
+            "~describe_image_service", "/langchain/describe_image"
+        )
+        self.call_describe_service = bool(rospy.get_param("~call_describe_service", True))
+        self.describe_service_timeout = float(rospy.get_param("~describe_service_timeout", 5.0))
+        self.describe_image_speak = bool(rospy.get_param("~describe_image_speak", True))
         self.speech_timeout = float(rospy.get_param("~speech_timeout", 8.0))
         self.screenshot_done_text = rospy.get_param("~screenshot_done_text", "截图完毕")
         self.restart_command = rospy.get_param("~restart_command", "重新截图")
@@ -89,8 +102,47 @@ class RedBallCenteringNode(object):
         self.head_pub = rospy.Publisher(
             "/MediumSize/BodyHub/HeadPosition", JointControlPoint, queue_size=10
         )
-        self.finish_pub = rospy.Publisher(self.finish_signal_topic, String, queue_size=1)
+        self.finish_pub = None
+        if self.enable_finish_topic:
+            self.finish_pub = rospy.Publisher(self.finish_signal_topic, String, queue_size=1)
+        self.image_sub = rospy.Subscriber(
+            self.image_topic, Image, self.image_callback, queue_size=1
+        )
         self.detect_ball = rospy.ServiceProxy(self.vision_service, BallDetectInAreaSrv)
+
+        self.latest_image_msg = None
+        self.captured_image_msg = None
+        self.latest_snapshot_path = ""
+        self.workflow_active = False
+        self.start_event = threading.Event()
+        if not self.wait_for_start_service:
+            self.start_event.set()
+        self.start_server = rospy.Service(self.start_service, StartFind, self.handle_start)
+
+    def image_callback(self, msg):
+        self.latest_image_msg = msg
+
+    def handle_start(self, request):
+        if not request.start:
+            return StartFindResponse(False, "start is false, ros_find_node ignored the request")
+        if self.workflow_active:
+            return StartFindResponse(False, "ros_find_node is already centering a red ball")
+        self.start_event.set()
+        return StartFindResponse(True, "ros_find_node started red ball centering")
+
+    def wait_for_start(self):
+        if not self.wait_for_start_service:
+            return True
+
+        rospy.loginfo(
+            "Waiting for first-stage service call: rosservice call %s \"start: true\"",
+            self.start_service,
+        )
+        while not rospy.is_shutdown():
+            if self.start_event.wait(0.2):
+                self.start_event.clear()
+                return True
+        return False
 
     def update_control_id(self):
         if not self.use_master_id_service:
@@ -177,6 +229,8 @@ class RedBallCenteringNode(object):
         return "finish"
 
     def publish_finish_signal(self):
+        if not self.finish_pub:
+            return
         msg = String()
         msg.data = self.finish_signal_text
         self.finish_pub.publish(msg)
@@ -185,6 +239,46 @@ class RedBallCenteringNode(object):
             self.finish_signal_topic,
             self.finish_signal_text,
         )
+
+    def call_describe_image(self):
+        if not self.call_describe_service:
+            rospy.loginfo("Describe image service call is disabled.")
+            return True
+        if self.captured_image_msg is None:
+            rospy.logerr("No captured image message is available for describe image service.")
+            return False
+
+        try:
+            from ros_langchain_node.srv import DescribeImage, DescribeImageRequest
+        except ImportError as err:
+            rospy.logerr(
+                "Cannot import ros_langchain_node/DescribeImage. "
+                "Make sure your teammate's srv is built in this catkin workspace: %s",
+                err,
+            )
+            return False
+
+        try:
+            rospy.loginfo("Waiting for describe image service: %s", self.describe_image_service)
+            rospy.wait_for_service(self.describe_image_service, timeout=self.describe_service_timeout)
+            client = rospy.ServiceProxy(self.describe_image_service, DescribeImage)
+            request = DescribeImageRequest()
+            request.image = self.captured_image_msg
+            if hasattr(request, "speak"):
+                request.speak = self.describe_image_speak
+
+            response = client(request)
+            success = bool(getattr(response, "success", False))
+            error_msg = getattr(response, "error_msg", "")
+            text = getattr(response, "text", "")
+            if success:
+                rospy.loginfo("Describe image service succeeded: %s", text)
+            else:
+                rospy.logwarn("Describe image service failed: %s", error_msg)
+            return success
+        except Exception as err:
+            rospy.logerr("Describe image service call failed: %s", err)
+            return False
 
     def search_for_ball(self, lost_count):
         if not self.enable_search or lost_count < self.search_start_frames:
@@ -249,78 +343,90 @@ class RedBallCenteringNode(object):
     def run(self):
         rospy.loginfo("Waiting for ball detection service: %s", self.vision_service)
         rospy.wait_for_service(self.vision_service)
-        self.update_control_id()
-        self.publish_head()
 
-        stable_count = 0
-        lost_count = 0
         rate = rospy.Rate(self.rate_hz)
 
         while not rospy.is_shutdown():
-            center = self.get_ball_center()
-            if center is None:
-                lost_count += 1
-                stable_count = 0
-                if lost_count % self.max_lost_frames == 0:
-                    rospy.logwarn("Red ball not found. Check camera view and lighting.")
-                self.search_for_ball(lost_count)
-                rate.sleep()
-                continue
+            if not self.wait_for_start():
+                return
 
+            self.workflow_active = True
+            self.captured_image_msg = None
+            self.latest_snapshot_path = ""
+            self.update_control_id()
+            self.publish_head()
+
+            stable_count = 0
             lost_count = 0
-            ball_x, ball_y = center
-            error_x = self.center_x - ball_x
-            error_y = self.center_y - ball_y
 
-            rospy.loginfo(
-                "ball=(%.1f, %.1f), error=(%.1f, %.1f), head=(%.2f, %.2f)",
-                ball_x,
-                ball_y,
-                error_x,
-                error_y,
-                self.pan,
-                self.tilt,
-            )
-
-            centered = abs(error_x) <= self.tolerance_x and abs(error_y) <= self.tolerance_y
-            if centered:
-                stable_count += 1
-                if stable_count >= self.stable_frames:
-                    rospy.loginfo("Red ball centered.")
-                    if self.capture_on_centered:
-                        time.sleep(0.5)
-                        try:
-                            self.capture_snapshot()
-                            self.speak(self.screenshot_done_text)
-                        except Exception as err:
-                            rospy.logerr("Snapshot failed: %s", err)
-
-                    next_action = self.wait_for_next_action()
-                    if next_action == "restart":
-                        rospy.loginfo("Restarting red ball recognition.")
-                        stable_count = 0
-                        lost_count = 0
-                        continue
-
-                    self.publish_finish_signal()
-                    if self.exit_after_capture:
-                        return
+            while not rospy.is_shutdown() and self.workflow_active:
+                center = self.get_ball_center()
+                if center is None:
+                    lost_count += 1
                     stable_count = 0
-            else:
-                stable_count = 0
-                if abs(error_x) > self.tolerance_x:
-                    self.pan = self.clamp(
-                        self.pan + self.pan_gain * error_x, self.pan_min, self.pan_max
-                    )
-                if abs(error_y) > self.tolerance_y:
-                    self.tilt = self.clamp(
-                        self.tilt + self.tilt_gain * error_y,
-                        self.tilt_min,
-                        self.tilt_max,
-                    )
-                self.publish_head()
+                    if lost_count % self.max_lost_frames == 0:
+                        rospy.logwarn("Red ball not found. Check camera view and lighting.")
+                    self.search_for_ball(lost_count)
+                    rate.sleep()
+                    continue
 
-            rate.sleep()
+                lost_count = 0
+                ball_x, ball_y = center
+                error_x = self.center_x - ball_x
+                error_y = self.center_y - ball_y
+
+                rospy.loginfo(
+                    "ball=(%.1f, %.1f), error=(%.1f, %.1f), head=(%.2f, %.2f)",
+                    ball_x,
+                    ball_y,
+                    error_x,
+                    error_y,
+                    self.pan,
+                    self.tilt,
+                )
+
+                centered = abs(error_x) <= self.tolerance_x and abs(error_y) <= self.tolerance_y
+                if centered:
+                    stable_count += 1
+                    if stable_count >= self.stable_frames:
+                        rospy.loginfo("Red ball centered.")
+                        if self.capture_on_centered:
+                            time.sleep(0.5)
+                            try:
+                                self.captured_image_msg = self.latest_image_msg
+                                self.latest_snapshot_path = self.capture_snapshot()
+                                self.speak(self.screenshot_done_text)
+                            except Exception as err:
+                                rospy.logerr("Snapshot failed: %s", err)
+
+                        next_action = self.wait_for_next_action()
+                        if next_action == "restart":
+                            rospy.loginfo("Restarting red ball recognition.")
+                            stable_count = 0
+                            lost_count = 0
+                            continue
+
+                        self.publish_finish_signal()
+                        self.call_describe_image()
+                        self.workflow_active = False
+                        if self.exit_after_capture and not self.wait_for_start_service:
+                            return
+                        break
+                else:
+                    stable_count = 0
+                    if abs(error_x) > self.tolerance_x:
+                        self.pan = self.clamp(
+                            self.pan + self.pan_gain * error_x, self.pan_min, self.pan_max
+                        )
+                    if abs(error_y) > self.tolerance_y:
+                        self.tilt = self.clamp(
+                            self.tilt + self.tilt_gain * error_y,
+                            self.tilt_min,
+                            self.tilt_max,
+                        )
+                    self.publish_head()
+
+                rate.sleep()
 
 
 if __name__ == "__main__":
