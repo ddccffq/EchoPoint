@@ -11,12 +11,10 @@ from urllib.request import urlopen
 import rospy
 from bodyhub.msg import JointControlPoint
 from bodyhub.srv import SrvTLSstring
-from ros_AIUI_node.srv import SrvWakeupMute, textToSpeakMultipleOptions
+from ros_AIUI_node.srv import textToSpeakMultipleOptions
 from ros_find_node.srv import StartFind, StartFindResponse
 from ros_vision_node.srv import BallDetectInAreaSrv
 from sensor_msgs.msg import Image
-from std_msgs.msg import String
-from std_srvs.srv import Empty, SetBool
 
 
 class RedBallCenteringNode(object):
@@ -71,29 +69,17 @@ class RedBallCenteringNode(object):
         self.wait_for_start_service = bool(rospy.get_param("~wait_for_start_service", True))
         self.start_service = rospy.get_param("~start_service", "/ros_find_node/start")
 
-        self.enable_voice_commands = bool(rospy.get_param("~enable_voice_commands", True))
+        self.enable_tts = bool(
+            rospy.get_param("~enable_tts", rospy.get_param("~enable_voice_commands", True))
+        )
         self.tts_service = rospy.get_param("~tts_service", "/aiui/text_to_speak_multiple_options")
-        self.speech_request_service = rospy.get_param("~speech_request_service", "/aiui/wakeup_mute")
-        self.speech_result_topic = rospy.get_param("~speech_result_topic", "/aiui/iat")
-        self.stop_recording_service = rospy.get_param("~stop_recording_service", "/aiui/stop_recording")
-        self.pause_head_sound_service = rospy.get_param(
-            "~pause_head_toward_sound_service", "/aiui/pause_head_toward_sound"
-        )
-        self.finish_signal_topic = rospy.get_param(
-            "~finish_signal_topic", "/ros_find_node/finish_signal"
-        )
-        self.finish_signal_text = rospy.get_param("~finish_signal_text", "start_recognition")
-        self.enable_finish_topic = bool(rospy.get_param("~enable_finish_topic", False))
         self.describe_image_service = rospy.get_param(
             "~describe_image_service", "/langchain/describe_image"
         )
         self.call_describe_service = bool(rospy.get_param("~call_describe_service", True))
         self.describe_service_timeout = float(rospy.get_param("~describe_service_timeout", 5.0))
         self.describe_image_speak = bool(rospy.get_param("~describe_image_speak", True))
-        self.speech_timeout = float(rospy.get_param("~speech_timeout", 8.0))
         self.screenshot_done_text = rospy.get_param("~screenshot_done_text", "截图完毕")
-        self.restart_command = rospy.get_param("~restart_command", "重新截图")
-        self.finish_command = rospy.get_param("~finish_command", "开始识别")
         self.tts_vcn = rospy.get_param("~tts_vcn", "qige")
         self.tts_speed = int(rospy.get_param("~tts_speed", 50))
         self.tts_pitch = int(rospy.get_param("~tts_pitch", 50))
@@ -102,9 +88,6 @@ class RedBallCenteringNode(object):
         self.head_pub = rospy.Publisher(
             "/MediumSize/BodyHub/HeadPosition", JointControlPoint, queue_size=10
         )
-        self.finish_pub = None
-        if self.enable_finish_topic:
-            self.finish_pub = rospy.Publisher(self.finish_signal_topic, String, queue_size=1)
         self.image_sub = rospy.Subscriber(
             self.image_topic, Image, self.image_callback, queue_size=1
         )
@@ -165,20 +148,8 @@ class RedBallCenteringNode(object):
         msg.mainControlID = self.control_id
         self.head_pub.publish(msg)
 
-    def normalize_command(self, text):
-        for punctuation in ["，", "。", "？", "！", "：", "“", "”", "《", "》", "；", "、", " ", "\t", "\n"]:
-            text = text.replace(punctuation, "")
-        return text
-
-    def set_head_sound_paused(self, is_paused):
-        try:
-            rospy.wait_for_service(self.pause_head_sound_service, timeout=1.0)
-            rospy.ServiceProxy(self.pause_head_sound_service, SetBool)(is_paused)
-        except Exception as err:
-            rospy.logdebug("Could not change head-toward-sound status: %s", err)
-
     def speak(self, text):
-        if not self.enable_voice_commands or not text:
+        if not self.enable_tts or not text:
             return
         try:
             rospy.wait_for_service(self.tts_service, timeout=2.0)
@@ -187,65 +158,12 @@ class RedBallCenteringNode(object):
         except Exception as err:
             rospy.logwarn("Text-to-speech failed: %s", err)
 
-    def listen_once(self):
-        self.set_head_sound_paused(True)
-        try:
-            rospy.wait_for_service(self.speech_request_service, timeout=2.0)
-            rospy.ServiceProxy(self.speech_request_service, SrvWakeupMute)(False)
-            msg = rospy.wait_for_message(
-                self.speech_result_topic, String, timeout=self.speech_timeout
-            )
-            return self.normalize_command(msg.data)
-        except Exception as err:
-            rospy.logwarn("Voice command timeout or failed: %s", err)
-            try:
-                rospy.wait_for_service(self.stop_recording_service, timeout=1.0)
-                rospy.ServiceProxy(self.stop_recording_service, Empty)()
-            except Exception:
-                pass
-            return ""
-        finally:
-            self.set_head_sound_paused(False)
-
-    def wait_for_next_action(self):
-        if not self.enable_voice_commands:
-            return "finish" if self.exit_after_capture else "restart"
-
-        while not rospy.is_shutdown():
-            rospy.loginfo(
-                "Waiting for voice command: %s / %s",
-                self.restart_command,
-                self.finish_command,
-            )
-            command = self.listen_once()
-            if not command:
-                continue
-            rospy.loginfo("Voice command: %s", command)
-            if self.restart_command in command:
-                return "restart"
-            if self.finish_command in command:
-                return "finish"
-            rospy.loginfo("Ignored voice command: %s", command)
-        return "finish"
-
-    def publish_finish_signal(self):
-        if not self.finish_pub:
-            return
-        msg = String()
-        msg.data = self.finish_signal_text
-        self.finish_pub.publish(msg)
-        rospy.loginfo(
-            "Published finish signal on %s: %s",
-            self.finish_signal_topic,
-            self.finish_signal_text,
-        )
-
     def call_describe_image(self):
         if not self.call_describe_service:
             rospy.loginfo("Describe image service call is disabled.")
             return True
-        if self.captured_image_msg is None:
-            rospy.logerr("No captured image message is available for describe image service.")
+        if self.captured_image_msg is None and not self.latest_snapshot_path:
+            rospy.logerr("No captured image is available for describe image service.")
             return False
 
         try:
@@ -263,7 +181,12 @@ class RedBallCenteringNode(object):
             rospy.wait_for_service(self.describe_image_service, timeout=self.describe_service_timeout)
             client = rospy.ServiceProxy(self.describe_image_service, DescribeImage)
             request = DescribeImageRequest()
-            request.image = self.captured_image_msg
+            if self.captured_image_msg is not None:
+                request.image = self.captured_image_msg
+            if hasattr(request, "image_path"):
+                request.image_path = self.latest_snapshot_path
+            if hasattr(request, "image_mime"):
+                request.image_mime = "image/jpeg"
             if hasattr(request, "speak"):
                 request.speak = self.describe_image_speak
 
@@ -399,14 +322,6 @@ class RedBallCenteringNode(object):
                             except Exception as err:
                                 rospy.logerr("Snapshot failed: %s", err)
 
-                        next_action = self.wait_for_next_action()
-                        if next_action == "restart":
-                            rospy.loginfo("Restarting red ball recognition.")
-                            stable_count = 0
-                            lost_count = 0
-                            continue
-
-                        self.publish_finish_signal()
                         self.call_describe_image()
                         self.workflow_active = False
                         if self.exit_after_capture and not self.wait_for_start_service:
