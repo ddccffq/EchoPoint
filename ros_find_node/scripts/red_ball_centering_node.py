@@ -15,6 +15,7 @@ from ros_AIUI_node.srv import textToSpeakMultipleOptions
 from ros_find_node.srv import StartFind, StartFindResponse
 from ros_vision_node.srv import BallDetectInAreaSrv
 from sensor_msgs.msg import Image
+from std_msgs.msg import Bool, Float64, Float64MultiArray
 
 
 class RedBallCenteringNode(object):
@@ -50,6 +51,21 @@ class RedBallCenteringNode(object):
         self.search_tilt_levels = [float(level) for level in self.search_tilt_levels]
         self.search_direction = 1.0
         self.search_tilt_index = 0
+        self.enable_body_search = bool(rospy.get_param("~enable_body_search", True))
+        self.body_search_step_degrees = abs(
+            float(rospy.get_param("~body_search_step_degrees", 30.0))
+        )
+        self.body_search_total_degrees = abs(
+            float(rospy.get_param("~body_search_total_degrees", 360.0))
+        )
+        self.body_search_head_pans = rospy.get_param(
+            "~body_search_head_pans", [-45.0, 0.0, 45.0]
+        )
+        if not self.body_search_head_pans:
+            self.body_search_head_pans = [0.0]
+        self.body_search_head_pans = [float(pan) for pan in self.body_search_head_pans]
+        self.body_search_head_index = 0
+        self.body_search_turned_degrees = 0.0
 
         self.pan_gain = float(rospy.get_param("~pan_gain", 0.01))
         self.tilt_gain = float(rospy.get_param("~tilt_gain", 0.01))
@@ -62,6 +78,14 @@ class RedBallCenteringNode(object):
 
         self.control_id = int(rospy.get_param("~control_id", 2))
         self.use_master_id_service = bool(rospy.get_param("~use_master_id_service", True))
+        self.walking_status_topic = rospy.get_param(
+            "~walking_status_topic", "/MediumSize/BodyHub/WalkingStatus"
+        )
+        self.gait_command_topic = rospy.get_param("~gait_command_topic", "/gaitCommand")
+        self.request_gait_topic = rospy.get_param(
+            "~request_gait_topic", "/requestGaitCommand"
+        )
+        self.gait_handshake_timeout = float(rospy.get_param("~gait_handshake_timeout", 3.0))
         self.rate_hz = float(rospy.get_param("~rate", 10.0))
         self.capture_on_centered = bool(rospy.get_param("~capture_on_centered", True))
         self.exit_after_capture = bool(rospy.get_param("~exit_after_capture", True))
@@ -88,12 +112,19 @@ class RedBallCenteringNode(object):
         self.head_pub = rospy.Publisher(
             "/MediumSize/BodyHub/HeadPosition", JointControlPoint, queue_size=10
         )
+        self.gait_pub = rospy.Publisher(
+            self.gait_command_topic, Float64MultiArray, queue_size=2
+        )
         self.image_sub = rospy.Subscriber(
             self.image_topic, Image, self.image_callback, queue_size=1
+        )
+        rospy.Subscriber(
+            self.walking_status_topic, Float64, self.walking_status_callback, queue_size=5
         )
         self.detect_ball = rospy.ServiceProxy(self.vision_service, BallDetectInAreaSrv)
 
         self.latest_image_msg = None
+        self.walking_status = 0.0
         self.captured_image_msg = None
         self.latest_snapshot_path = ""
         self.workflow_active = False
@@ -104,6 +135,9 @@ class RedBallCenteringNode(object):
 
     def image_callback(self, msg):
         self.latest_image_msg = msg
+
+    def walking_status_callback(self, msg):
+        self.walking_status = float(msg.data)
 
     def handle_start(self, request):
         if not request.start:
@@ -147,6 +181,49 @@ class RedBallCenteringNode(object):
         msg.positions = [self.pan, -self.tilt]
         msg.mainControlID = self.control_id
         self.head_pub.publish(msg)
+
+    def is_walking(self):
+        return self.walking_status > 0.5
+
+    def publish_body_turn(self):
+        if self.body_search_step_degrees <= 0.0:
+            return False
+        if self.body_search_turned_degrees >= self.body_search_total_degrees:
+            rospy.logwarn_throttle(
+                5.0,
+                "Full %.1f degree red ball body search completed.",
+                self.body_search_total_degrees,
+            )
+            self.body_search_turned_degrees = 0.0
+
+        try:
+            rospy.wait_for_message(
+                self.request_gait_topic,
+                Bool,
+                timeout=self.gait_handshake_timeout,
+            )
+            rospy.loginfo("requestGaitCommand handshake received for red ball search")
+        except rospy.ROSException:
+            rospy.logwarn(
+                "requestGaitCommand timeout (%.1fs), publishing body search turn anyway",
+                self.gait_handshake_timeout,
+            )
+
+        turn_step = min(
+            self.body_search_step_degrees,
+            max(self.body_search_total_degrees - self.body_search_turned_degrees, 0.0),
+        )
+        if turn_step <= 0.0:
+            turn_step = self.body_search_step_degrees
+        self.gait_pub.publish(Float64MultiArray(data=[0.0, 0.0, turn_step]))
+        self.body_search_turned_degrees += abs(turn_step)
+        rospy.loginfo(
+            "Published red ball body search turn: %.1f deg (%.1f/%.1f)",
+            turn_step,
+            self.body_search_turned_degrees,
+            self.body_search_total_degrees,
+        )
+        return True
 
     def speak(self, text):
         if not self.enable_tts or not text:
@@ -207,6 +284,36 @@ class RedBallCenteringNode(object):
         if not self.enable_search or lost_count < self.search_start_frames:
             return
         if (lost_count - self.search_start_frames) % self.search_step_frames != 0:
+            return
+        if self.enable_body_search:
+            if self.is_walking():
+                rospy.loginfo_throttle(2.0, "Body is turning during red ball search.")
+                return
+
+            pans_count = len(self.body_search_head_pans)
+            tilts_count = len(self.search_tilt_levels)
+            total_head_steps = max(pans_count * tilts_count, 1)
+            pan = self.body_search_head_pans[self.body_search_head_index % pans_count]
+            tilt = self.search_tilt_levels[
+                (self.body_search_head_index // pans_count) % tilts_count
+            ]
+            self.pan = self.clamp(pan, self.pan_min, self.pan_max)
+            self.tilt = self.clamp(tilt, self.tilt_min, self.tilt_max)
+            self.publish_head()
+            rospy.loginfo(
+                "Searching red ball with head: lost_frames=%d, head=(%.2f, %.2f), "
+                "body_search=%.1f/%.1f",
+                lost_count,
+                self.pan,
+                self.tilt,
+                self.body_search_turned_degrees,
+                self.body_search_total_degrees,
+            )
+
+            self.body_search_head_index += 1
+            if self.body_search_head_index >= total_head_steps:
+                self.body_search_head_index = 0
+                self.publish_body_turn()
             return
 
         next_pan = self.pan + self.search_direction * self.search_pan_step
@@ -276,6 +383,8 @@ class RedBallCenteringNode(object):
             self.workflow_active = True
             self.captured_image_msg = None
             self.latest_snapshot_path = ""
+            self.body_search_head_index = 0
+            self.body_search_turned_degrees = 0.0
             self.update_control_id()
             self.publish_head()
 
@@ -295,6 +404,8 @@ class RedBallCenteringNode(object):
 
                 lost_count = 0
                 ball_x, ball_y = center
+                self.body_search_head_index = 0
+                self.body_search_turned_degrees = 0.0
                 error_x = self.center_x - ball_x
                 error_y = self.center_y - ball_y
 

@@ -13,11 +13,11 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, Float64, Float64MultiArray, String
 
 try:
-    from ros_find_node.srv import PointingTask
-    _POINTING_TASK_AVAILABLE = True
+    from ros_find_node.srv import StartFind
+    _START_FIND_AVAILABLE = True
 except ImportError:
-    PointingTask = None
-    _POINTING_TASK_AVAILABLE = False
+    StartFind = None
+    _START_FIND_AVAILABLE = False
 
 try:
     from ros_AIUI_node.srv import textToSpeak
@@ -78,11 +78,12 @@ class Module1Master(object):
         self.gait_handshake_timeout = float(rospy.get_param("~gait_handshake_timeout", 20.0))
         self.wait_stop_timeout = float(rospy.get_param("~wait_stop_timeout", 10.0))
         self.control_id = int(rospy.get_param("~control_id", 30))
-        self.module2_timeout = float(rospy.get_param("~module2_timeout", 60.0))
-        self.module2_wait_timeout = float(rospy.get_param("~module2_wait_timeout", 10.0))
-        self.module2_service = rospy.get_param(
-            "~module2_service", "/ros_find_node/pointing_task"
+        self.find_service_wait_timeout = float(
+            rospy.get_param("~find_service_wait_timeout", 10.0)
         )
+        self.find_service = rospy.get_param("~find_service", "/ros_find_node/start")
+        self.arrival_text = rospy.get_param("~arrival_text", "我已经到位了")
+        self.post_arrival_silence = float(rospy.get_param("~post_arrival_silence", 3.0))
         self.sound_offset = float(rospy.get_param("~sound_offset", 0.0))
 
         self.hsv_lower1 = self._load_hsv_param("~hsv_lower1", [0, 80, 50])
@@ -199,46 +200,31 @@ class Module1Master(object):
         except rospy.ROSException as exc:
             rospy.logwarn("TTS ros exception: %s", exc)
 
-    def _call_module2_and_wait(self):
-        if not _POINTING_TASK_AVAILABLE or PointingTask is None:
-            rospy.logwarn("ros_find_node/PointingTask is not importable, skipping module2")
+    def _call_find_node(self):
+        if not _START_FIND_AVAILABLE or StartFind is None:
+            rospy.logwarn("ros_find_node/StartFind is not importable, skipping find node")
             return
 
-        rospy.loginfo("Waiting for module2 service %s...", self.module2_service)
+        rospy.loginfo("Waiting for find node service %s...", self.find_service)
         try:
-            rospy.wait_for_service(self.module2_service, timeout=self.module2_wait_timeout)
+            rospy.wait_for_service(self.find_service, timeout=self.find_service_wait_timeout)
         except rospy.ROSException:
             rospy.logwarn(
-                "Module2 service %s not started within %.1fs, skipping",
-                self.module2_service,
-                self.module2_wait_timeout,
+                "Find node service %s not started within %.1fs, skipping",
+                self.find_service,
+                self.find_service_wait_timeout,
             )
             return
 
-        client = rospy.ServiceProxy(self.module2_service, PointingTask)
+        client = rospy.ServiceProxy(self.find_service, StartFind)
         try:
-            resp = client(True, "module1_target_reached")
+            resp = client(True)
             if resp.success:
-                rospy.loginfo(
-                    "Module2 & 3 completed successfully: %s image=%s",
-                    resp.message,
-                    resp.image_path,
-                )
-                if resp.description:
-                    rospy.loginfo("Langchain description: %s", resp.description)
+                rospy.loginfo("Find node started successfully: %s", resp.message)
             else:
-                rospy.logwarn(
-                    "Module2 returned failure: %s %s",
-                    resp.message,
-                    resp.error_msg,
-                )
-        except rospy.ROSException:
-            rospy.logwarn(
-                "Module2 service timeout (%.1fs), proceeding to idle",
-                self.module2_timeout,
-            )
+                rospy.logwarn("Find node returned failure: %s", resp.message)
         except rospy.ServiceException as exc:
-            rospy.logwarn("Module2 service call failed: %s", exc)
+            rospy.logwarn("Find node service call failed: %s", exc)
 
     def _load_hsv_param(self, name, default):
         value = rospy.get_param(name, default)
@@ -424,8 +410,10 @@ class Module1Master(object):
                 rospy.loginfo("Target reached, saved frame to %s", self.capture_path)
             else:
                 rospy.logerr("Target reached, but failed to save %s", self.capture_path)
-            self._speak("进行下一步吧")
-            self._call_module2_and_wait()
+            self._speak(self.arrival_text)
+            if self.post_arrival_silence > 0.0:
+                rospy.sleep(self.post_arrival_silence)
+            self._call_find_node()
             self._safe_to_idle()
             return
 
