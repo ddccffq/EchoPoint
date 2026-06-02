@@ -1,0 +1,65 @@
+<launch>
+  <arg name="image_topic" default="/camera/color/image_raw" />
+  <arg name="output_dir" default="$(find ros_find_node)/pointing_snapshots" />
+  <arg name="wait_for_start_service" default="true" />
+  <arg name="start_service" default="/ros_find_node/start_pointing" />
+  <arg name="task_service" default="/ros_find_node/pointing_task" />
+  <arg name="describe_image_service" default="/langchain/describe_image" />
+
+  <node pkg="ros_find_node"
+        type="pointing_centering_node.py"
+        name="pointing_centering_node"
+        output="screen">
+    <param name="image_topic" value="$(arg image_topic)" />
+    <param name="output_dir" value="$(arg output_dir)" />
+    <param name="debug_image_topic" value="/ros_find_node/pointing_debug_image" />
+    <param name="capture_on_centered" value="true" />
+    <param name="exit_after_capture" value="false" />
+
+    <param name="wait_for_start_service" value="$(arg wait_for_start_service)" />
+    <param name="start_service" value="$(arg start_service)" />
+    <param name="task_service" value="$(arg task_service)" />
+    <param name="task_wait_timeout" value="180.0" />
+
+    <param name="center_x" value="320.0" />
+    <param name="center_y" value="240.0" />
+    <param name="tolerance_x" value="30.0" />
+    <param name="tolerance_y" value="30.0" />
+    <param name="stable_frames" value="5" />
+
+    <param name="min_hand_area" value="2500.0" />
+    <param name="min_finger_distance" value="45.0" />
+    <param name="pointing_extension" value="2.5" />
+
+    <param name="enable_search" value="true" />
+    <param name="search_start_frames" value="5" />
+    <param name="search_step_frames" value="4" />
+    <param name="search_pan_min" value="-60.0" />
+    <param name="search_pan_max" value="60.0" />
+    <param name="search_pan_step" value="8.0" />
+    <rosparam param="search_tilt_levels">[-10.0, 0.0, 10.0]</rosparam>
+
+    <param name="enable_voice_commands" value="true" />
+    <param name="tts_service" value="/aiui/text_to_speak_multiple_options" />
+    <param name="speech_request_service" value="/aiui/wakeup_mute" />
+    <param name="speech_result_topic" value="/aiui/iat" />
+    <param name="stop_recording_service" value="/aiui/stop_recording" />
+    <param name="pause_head_toward_sound_service" value="/aiui/pause_head_toward_sound" />
+    <param name="call_describe_service" value="true" />
+    <param name="describe_image_service" value="$(arg describe_image_service)" />
+    <param name="describe_service_timeout" value="5.0" />
+    <param name="describe_image_speak" value="true" />
+    <param name="speech_timeout" value="8.0" />
+    <param name="screenshot_done_text" value="截图完毕" />
+    <param name="restart_command" value="重新截图" />
+    <param name="finish_command" value="开始识别" />
+
+    <param name="pan_gain" value="0.01" />
+    <param name="tilt_gain" value="0.01" />
+    <param name="pan_min" value="-90.0" />
+    <param name="pan_max" value="90.0" />
+    <param name="tilt_min" value="-25.0" />
+    <param name="tilt_max" value="25.0" />
+    <param name="control_id" value="2" />
+  </node>
+</launch>

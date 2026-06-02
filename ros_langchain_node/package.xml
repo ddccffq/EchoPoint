@@ -3,22 +3,38 @@
   <name>ros_langchain_node</name>
   <version>0.1.0</version>
   <description>ROS node for LangChain integration</description>
-  
+
   <maintainer email="lemon@example.com">lemon</maintainer>
   <license>MIT</license>
-  
+
   <buildtool_depend>catkin</buildtool_depend>
-  
+
+  <!-- 构建期依赖 -->
   <build_depend>roscpp</build_depend>
   <build_depend>rospy</build_depend>
   <build_depend>std_msgs</build_depend>
+  <build_depend>sensor_msgs</build_depend>
   <build_depend>geometry_msgs</build_depend>
-  
+  <build_depend>message_generation</build_depend>
+
+  <!-- 运行期依赖 -->
   <exec_depend>roscpp</exec_depend>
   <exec_depend>rospy</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
-  
+  <exec_depend>message_runtime</exec_depend>
+
+  <!-- 如果你在代码里 import 了 ros_AIUI_node.srv 的 textToSpeak，建议加上 -->
+  <exec_depend>ros_AIUI_node</exec_depend>
+
+  <!-- 用于在 rosrun/catkin_install_python 环境中定位本包路径 -->
+  <exec_depend>rospkg</exec_depend>
+
+  <!-- 若你要把 Image 转 cv2，需要 cv_bridge -->
+  <build_depend>cv_bridge</build_depend>
+  <exec_depend>cv_bridge</exec_depend>
+
   <export>
     <build_type>catkin</build_type>
   </export>

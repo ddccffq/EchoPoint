@@ -1,0 +1,59 @@
+<launch>
+  <arg name="image_topic" default="/camera/color/image_raw" />
+  <arg name="output_dir" default="$(find ros_find_node)/snapshots" />
+  <arg name="wait_for_start_service" default="true" />
+
+  <node pkg="ros_find_node"
+        type="red_ball_centering_node.py"
+        name="ros_find_node"
+        output="screen">
+    <param name="image_topic" value="$(arg image_topic)" />
+    <param name="snapshot_url" value="http://localhost:8080/snapshot?topic=$(arg image_topic)" />
+    <param name="output_dir" value="$(arg output_dir)" />
+    <param name="capture_on_centered" value="true" />
+    <param name="exit_after_capture" value="false" />
+
+    <param name="wait_for_start_service" value="$(arg wait_for_start_service)" />
+    <param name="start_service" value="/ros_find_node/start" />
+
+    <param name="center_x" value="320.0" />
+    <param name="center_y" value="240.0" />
+    <param name="tolerance_x" value="20.0" />
+    <param name="tolerance_y" value="20.0" />
+    <param name="stable_frames" value="8" />
+
+    <param name="enable_search" value="true" />
+    <param name="search_start_frames" value="3" />
+    <param name="search_step_frames" value="3" />
+    <param name="search_pan_min" value="-60.0" />
+    <param name="search_pan_max" value="60.0" />
+    <param name="search_pan_step" value="8.0" />
+    <rosparam param="search_tilt_levels">[-10.0, 0.0, 10.0]</rosparam>
+
+    <param name="enable_voice_commands" value="true" />
+    <param name="tts_service" value="/aiui/text_to_speak_multiple_options" />
+    <param name="speech_request_service" value="/aiui/wakeup_mute" />
+    <param name="speech_result_topic" value="/aiui/iat" />
+    <param name="stop_recording_service" value="/aiui/stop_recording" />
+    <param name="pause_head_toward_sound_service" value="/aiui/pause_head_toward_sound" />
+    <param name="enable_finish_topic" value="false" />
+    <param name="finish_signal_topic" value="/ros_find_node/finish_signal" />
+    <param name="finish_signal_text" value="start_recognition" />
+    <param name="call_describe_service" value="true" />
+    <param name="describe_image_service" value="/langchain/describe_image" />
+    <param name="describe_service_timeout" value="5.0" />
+    <param name="describe_image_speak" value="true" />
+    <param name="speech_timeout" value="8.0" />
+    <param name="screenshot_done_text" value="截图完毕" />
+    <param name="restart_command" value="重新截图" />
+    <param name="finish_command" value="开始识别" />
+
+    <param name="pan_gain" value="0.01" />
+    <param name="tilt_gain" value="0.01" />
+    <param name="pan_min" value="-90.0" />
+    <param name="pan_max" value="90.0" />
+    <param name="tilt_min" value="-25.0" />
+    <param name="tilt_max" value="25.0" />
+    <param name="control_id" value="2" />
+  </node>
+</launch>

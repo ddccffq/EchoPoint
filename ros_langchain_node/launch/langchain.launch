@@ -1,0 +1,18 @@
+<launch>
+  <arg name="service_name" default="/langchain/describe_image" />
+  <arg name="image_encoding" default="bgr8" />
+  <arg name="enable_tts" default="true" />
+  <arg name="tts_service_name" default="/aiui/text_to_speak" />
+  <arg name="auto_unload_after_request" default="true" />
+
+  <node pkg="ros_langchain_node"
+        type="langchain_node.py"
+        name="langchain_node"
+        output="screen">
+    <param name="service_name" value="$(arg service_name)" />
+    <param name="image_encoding" value="$(arg image_encoding)" />
+    <param name="enable_tts" value="$(arg enable_tts)" />
+    <param name="tts_service_name" value="$(arg tts_service_name)" />
+    <param name="auto_unload_after_request" value="$(arg auto_unload_after_request)" />
+  </node>
+</launch>

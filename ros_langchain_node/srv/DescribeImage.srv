@@ -1,0 +1,9 @@
+sensor_msgs/Image image
+string image_path
+uint8[] image_data
+string image_mime
+bool speak
+---
+bool success
+string text
+string error_msg
