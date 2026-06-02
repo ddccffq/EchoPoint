@@ -203,7 +203,7 @@ class Module1Master(object):
     def _call_find_node(self):
         if not _START_FIND_AVAILABLE or StartFind is None:
             rospy.logwarn("ros_find_node/StartFind is not importable, skipping find node")
-            return
+            return False
 
         rospy.loginfo("Waiting for find node service %s...", self.find_service)
         try:
@@ -214,17 +214,20 @@ class Module1Master(object):
                 self.find_service,
                 self.find_service_wait_timeout,
             )
-            return
+            return False
 
         client = rospy.ServiceProxy(self.find_service, StartFind)
         try:
             resp = client(True)
             if resp.success:
                 rospy.loginfo("Find node started successfully: %s", resp.message)
+                return True
             else:
                 rospy.logwarn("Find node returned failure: %s", resp.message)
+                return False
         except rospy.ServiceException as exc:
             rospy.logwarn("Find node service call failed: %s", exc)
+            return False
 
     def _load_hsv_param(self, name, default):
         value = rospy.get_param(name, default)
@@ -413,8 +416,10 @@ class Module1Master(object):
             self._speak(self.arrival_text)
             if self.post_arrival_silence > 0.0:
                 rospy.sleep(self.post_arrival_silence)
-            self._call_find_node()
-            self._safe_to_idle()
+            if self._call_find_node():
+                self._set_state(self.STATE_IDLE)
+            else:
+                self._safe_to_idle()
             return
 
         theta = 0.0
