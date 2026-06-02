@@ -17,6 +17,13 @@ from ros_vision_node.srv import BallDetectInAreaSrv
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, Float64, Float64MultiArray
 
+try:
+    from motion.bodyhub_client import BodyhubClient
+    _BODYHUB_CLIENT_AVAILABLE = True
+except ImportError:
+    BodyhubClient = None
+    _BODYHUB_CLIENT_AVAILABLE = False
+
 
 class RedBallCenteringNode(object):
     def __init__(self):
@@ -53,7 +60,7 @@ class RedBallCenteringNode(object):
         self.search_tilt_index = 0
         self.enable_body_search = bool(rospy.get_param("~enable_body_search", True))
         self.body_search_step_degrees = abs(
-            float(rospy.get_param("~body_search_step_degrees", 30.0))
+            float(rospy.get_param("~body_search_step_degrees", 10.0))
         )
         self.body_search_total_degrees = abs(
             float(rospy.get_param("~body_search_total_degrees", 360.0))
@@ -76,7 +83,7 @@ class RedBallCenteringNode(object):
         self.pan = float(rospy.get_param("~initial_pan", 0.0))
         self.tilt = float(rospy.get_param("~initial_tilt", 0.0))
 
-        self.control_id = int(rospy.get_param("~control_id", 2))
+        self.control_id = int(rospy.get_param("~control_id", 30))
         self.use_master_id_service = bool(rospy.get_param("~use_master_id_service", True))
         self.walking_status_topic = rospy.get_param(
             "~walking_status_topic", "/MediumSize/BodyHub/WalkingStatus"
@@ -128,6 +135,16 @@ class RedBallCenteringNode(object):
         self.captured_image_msg = None
         self.latest_snapshot_path = ""
         self.workflow_active = False
+        self.bodyhub_client = None
+        self.bodyhub_ready = False
+        if _BODYHUB_CLIENT_AVAILABLE:
+            try:
+                self.bodyhub_client = BodyhubClient(self.control_id)
+                rospy.loginfo("BodyhubClient created with control_id=%d", self.control_id)
+            except Exception as err:
+                rospy.logwarn("Could not create BodyhubClient: %s", err)
+        else:
+            rospy.logwarn("motion.bodyhub_client is unavailable; body search may not move.")
         self.start_event = threading.Event()
         if not self.wait_for_start_service:
             self.start_event.set()
@@ -172,6 +189,49 @@ class RedBallCenteringNode(object):
                 self.control_id = int(response.data)
         except Exception as err:
             rospy.logwarn("Could not update BodyHub control id: %s", err)
+
+    def bodyhub_walk(self):
+        if self.bodyhub_client is None:
+            rospy.logwarn_throttle(
+                5.0,
+                "BodyhubClient not available; publishing gait without BodyHub walk state.",
+            )
+            return True
+
+        try:
+            result = self.bodyhub_client.reset()
+            if result is not True:
+                result = self.bodyhub_client.reset(root=True)
+                if result is not True:
+                    rospy.logwarn("BodyHub reset failed (result=%s), forcing reset", result)
+                    self.bodyhub_client.reset(root=True)
+
+            result = self.bodyhub_client.ready()
+            if result is not True:
+                rospy.logwarn("BodyHub ready() failed (result=%s)", result)
+                return False
+
+            result = self.bodyhub_client.walk()
+            if result is not True:
+                rospy.logwarn("BodyHub walk() failed (result=%s)", result)
+                return False
+
+            self.bodyhub_ready = True
+            rospy.loginfo("BodyHub state machine: walking for red ball search")
+            return True
+        except Exception as err:
+            rospy.logwarn("BodyHub walk state setup failed: %s", err)
+            return False
+
+    def bodyhub_reset(self, force=False):
+        if self.bodyhub_client is None:
+            return
+        try:
+            self.bodyhub_client.reset(root=force)
+            self.bodyhub_ready = False
+            rospy.loginfo("BodyHub reset after red ball search (force=%s)", force)
+        except Exception as err:
+            rospy.logwarn("BodyHub reset exception: %s", err)
 
     def clamp(self, value, lower, upper):
         return max(lower, min(upper, value))
@@ -385,6 +445,7 @@ class RedBallCenteringNode(object):
             self.latest_snapshot_path = ""
             self.body_search_head_index = 0
             self.body_search_turned_degrees = 0.0
+            self.bodyhub_walk()
             self.update_control_id()
             self.publish_head()
 
@@ -435,6 +496,7 @@ class RedBallCenteringNode(object):
 
                         self.call_describe_image()
                         self.workflow_active = False
+                        self.bodyhub_reset()
                         if self.exit_after_capture and not self.wait_for_start_service:
                             return
                         break
