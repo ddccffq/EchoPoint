@@ -10,6 +10,7 @@
 
     <param name="control_id"              value="30" />
     <param name="module2_timeout"          value="60.0" />
+    <param name="sound_offset"            value="44.0" />
     <param name="gait_handshake_timeout"  value="20.0" />
     <param name="wait_stop_timeout"       value="10.0" />
 

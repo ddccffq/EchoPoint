@@ -72,6 +72,7 @@ class Module1Master(object):
         self.wait_stop_timeout = float(rospy.get_param("~wait_stop_timeout", 10.0))
         self.control_id = int(rospy.get_param("~control_id", 30))
         self.module2_timeout = float(rospy.get_param("~module2_timeout", 60.0))
+        self.sound_offset = float(rospy.get_param("~sound_offset", 0.0))
 
         self.hsv_lower1 = self._load_hsv_param("~hsv_lower1", [0, 80, 50])
         self.hsv_upper1 = self._load_hsv_param("~hsv_upper1", [12, 255, 255])
@@ -225,18 +226,21 @@ class Module1Master(object):
             rospy.logwarn("Failed to parse wakeup payload %r: %s", msg.data, exc)
             return
 
+        raw_angle = angle
+        corrected = self._normalize_angle(raw_angle + self.sound_offset)
         with self.lock:
             if self.state != self.STATE_IDLE:
                 rospy.logwarn("Wakeup ignored while state=%s", self.state)
                 return
-            self.pending_sound_angle = -self._normalize_angle(angle)
+            self.pending_sound_angle = -corrected
             self.search_step_count = 0
 
         pending = self.pending_sound_angle
         rospy.loginfo(
-            "[WAKEUP] raw_angle=%.2f, normalized=%.2f, pending(negated)=%.2f",
-            angle,
-            self._normalize_angle(angle),
+            "[WAKEUP] raw_angle=%.2f, offset=%.1f, corrected=%.2f, pending(negated)=%.2f",
+            raw_angle,
+            self.sound_offset,
+            corrected,
             pending,
         )
 
