@@ -25,8 +25,12 @@
     <param name="min_hand_area" value="2500.0" />
     <param name="min_finger_distance" value="45.0" />
     <param name="pointing_extension" value="2.5" />
+    <param name="target_edge_margin" value="35.0" />
+    <param name="target_confirm_frames" value="3" />
+    <param name="max_target_jump" value="90.0" />
+    <param name="target_smoothing" value="0.35" />
 
-    <param name="enable_search" value="true" />
+    <param name="enable_search" value="false" />
     <param name="search_start_frames" value="5" />
     <param name="search_step_frames" value="4" />
     <param name="search_pan_min" value="-60.0" />
@@ -51,6 +55,7 @@
 
     <param name="pan_gain" value="0.01" />
     <param name="tilt_gain" value="0.01" />
+    <param name="max_head_step" value="2.0" />
     <param name="pan_min" value="-90.0" />
     <param name="pan_max" value="90.0" />
     <param name="tilt_min" value="-25.0" />
