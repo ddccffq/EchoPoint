@@ -1,6 +1,6 @@
 <launch>
   <arg name="image_topic" default="/camera/color/image_raw" />
-  <arg name="module2_service" default="/ros_find_node/pointing_task" />
+  <arg name="find_service" default="/ros_find_node/start" />
 
   <node pkg="ros_locate_node" type="module1_master.py" name="module1_master" output="screen">
     <param name="image_topic"             value="$(arg image_topic)" />
@@ -12,7 +12,10 @@
     <param name="capture_path"            value="/tmp/target_captured.jpg" />
 
     <param name="control_id"              value="30" />
-    <param name="module2_timeout"          value="60.0" />
+    <param name="find_service"            value="$(arg find_service)" />
+    <param name="find_service_wait_timeout" value="10.0" />
+    <param name="arrival_text"            value="我已经到位了" />
+    <param name="post_arrival_silence"    value="3.0" />
     <param name="sound_offset"            value="50.0" />
     <param name="gait_handshake_timeout"  value="20.0" />
     <param name="wait_stop_timeout"       value="10.0" />
