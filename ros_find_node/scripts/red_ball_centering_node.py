@@ -111,6 +111,7 @@ class RedBallCenteringNode(object):
         self.describe_service_timeout = float(rospy.get_param("~describe_service_timeout", 5.0))
         self.describe_image_speak = bool(rospy.get_param("~describe_image_speak", True))
         self.screenshot_done_text = rospy.get_param("~screenshot_done_text", "截图完毕")
+        self.screenshot_tts_async = bool(rospy.get_param("~screenshot_tts_async", True))
         self.tts_vcn = rospy.get_param("~tts_vcn", "qige")
         self.tts_speed = int(rospy.get_param("~tts_speed", 50))
         self.tts_pitch = int(rospy.get_param("~tts_pitch", 50))
@@ -295,6 +296,13 @@ class RedBallCenteringNode(object):
         except Exception as err:
             rospy.logwarn("Text-to-speech failed: %s", err)
 
+    def speak_async(self, text):
+        if not self.enable_tts or not text:
+            return
+        thread = threading.Thread(target=self.speak, args=(text,))
+        thread.daemon = True
+        thread.start()
+
     def call_describe_image(self):
         if not self.call_describe_service:
             rospy.loginfo("Describe image service call is disabled.")
@@ -327,6 +335,13 @@ class RedBallCenteringNode(object):
             if hasattr(request, "speak"):
                 request.speak = self.describe_image_speak
 
+            rospy.loginfo(
+                "Calling describe image service: %s, image_path=%s, has_image_msg=%s, speak=%s",
+                self.describe_image_service,
+                self.latest_snapshot_path or "<empty>",
+                self.captured_image_msg is not None,
+                getattr(request, "speak", False),
+            )
             response = client(request)
             success = bool(getattr(response, "success", False))
             error_msg = getattr(response, "error_msg", "")
@@ -490,10 +505,14 @@ class RedBallCenteringNode(object):
                             try:
                                 self.captured_image_msg = self.latest_image_msg
                                 self.latest_snapshot_path = self.capture_snapshot()
-                                self.speak(self.screenshot_done_text)
+                                if self.screenshot_tts_async:
+                                    self.speak_async(self.screenshot_done_text)
+                                else:
+                                    self.speak(self.screenshot_done_text)
                             except Exception as err:
                                 rospy.logerr("Snapshot failed: %s", err)
 
+                        rospy.loginfo("Snapshot flow complete, triggering describe image service.")
                         self.call_describe_image()
                         self.workflow_active = False
                         self.bodyhub_reset()
