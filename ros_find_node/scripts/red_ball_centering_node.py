@@ -83,8 +83,15 @@ class RedBallCenteringNode(object):
         self.pan = float(rospy.get_param("~initial_pan", 0.0))
         self.tilt = float(rospy.get_param("~initial_tilt", 0.0))
 
-        self.control_id = int(rospy.get_param("~control_id", 30))
+        self.control_id = int(rospy.get_param("~control_id", 2))
+        self.body_control_id = int(rospy.get_param("~body_control_id", 30))
         self.use_master_id_service = bool(rospy.get_param("~use_master_id_service", True))
+        self.enable_bodyhub_walk_setup = bool(
+            rospy.get_param("~enable_bodyhub_walk_setup", False)
+        )
+        self.require_walking_for_body_search = bool(
+            rospy.get_param("~require_walking_for_body_search", True)
+        )
         self.walking_status_topic = rospy.get_param(
             "~walking_status_topic", "/MediumSize/BodyHub/WalkingStatus"
         )
@@ -140,8 +147,8 @@ class RedBallCenteringNode(object):
         self.bodyhub_ready = False
         if _BODYHUB_CLIENT_AVAILABLE:
             try:
-                self.bodyhub_client = BodyhubClient(self.control_id)
-                rospy.loginfo("BodyhubClient created with control_id=%d", self.control_id)
+                self.bodyhub_client = BodyhubClient(self.body_control_id)
+                rospy.loginfo("BodyhubClient created with control_id=%d", self.body_control_id)
             except Exception as err:
                 rospy.logwarn("Could not create BodyhubClient: %s", err)
         else:
@@ -192,6 +199,11 @@ class RedBallCenteringNode(object):
             rospy.logwarn("Could not update BodyHub control id: %s", err)
 
     def bodyhub_walk(self):
+        if not self.enable_bodyhub_walk_setup:
+            rospy.loginfo(
+                "BodyHub walk setup disabled in find node; expecting locate node to keep walking state."
+            )
+            return True
         if self.bodyhub_client is None:
             rospy.logwarn_throttle(
                 5.0,
@@ -248,6 +260,13 @@ class RedBallCenteringNode(object):
 
     def publish_body_turn(self):
         if self.body_search_step_degrees <= 0.0:
+            return False
+        if self.require_walking_for_body_search and not self.is_walking():
+            rospy.logwarn_throttle(
+                3.0,
+                "Skipping body search turn because WalkingStatus is not walking. "
+                "Start from locate_node or set require_walking_for_body_search:=false.",
+            )
             return False
         if self.body_search_turned_degrees >= self.body_search_total_degrees:
             rospy.logwarn_throttle(

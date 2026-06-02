@@ -37,6 +37,8 @@
     <param name="gait_command_topic" value="/gaitCommand" />
     <param name="request_gait_topic" value="/requestGaitCommand" />
     <param name="gait_handshake_timeout" value="3.0" />
+    <param name="enable_bodyhub_walk_setup" value="false" />
+    <param name="require_walking_for_body_search" value="true" />
 
     <param name="enable_tts" value="true" />
     <param name="tts_service" value="/aiui/text_to_speak_multiple_options" />
@@ -53,6 +55,7 @@
     <param name="pan_max" value="90.0" />
     <param name="tilt_min" value="-25.0" />
     <param name="tilt_max" value="25.0" />
-    <param name="control_id" value="30" />
+    <param name="control_id" value="2" />
+    <param name="body_control_id" value="30" />
   </node>
 </launch>
