@@ -1,6 +1,9 @@
 <launch>
+  <arg name="image_topic" default="/camera/color/image_raw" />
+  <arg name="module2_service" default="/ros_find_node/pointing_task" />
+
   <node pkg="ros_locate_node" type="module1_master.py" name="module1_master" output="screen">
-    <param name="image_topic"             value="/camera/color/image_raw" />
+    <param name="image_topic"             value="$(arg image_topic)" />
     <param name="wakeup_topic"            value="/micarrays/wakeup" />
     <param name="walking_status_topic"    value="/MediumSize/BodyHub/WalkingStatus" />
     <param name="gait_command_topic"      value="/gaitCommand" />
@@ -10,10 +13,12 @@
 
     <param name="control_id"              value="30" />
     <param name="module2_timeout"          value="60.0" />
+    <param name="sound_offset"            value="50.0" />
     <param name="gait_handshake_timeout"  value="20.0" />
     <param name="wait_stop_timeout"       value="10.0" />
 
     <param name="search_max_steps"         value="36" />
+    <param name="mid_turn_min_area_ratio" value="0.01" />
     <param name="arrival_area_ratio"      value="0.35" />
     <param name="min_area_ratio"          value="0.002" />
     <param name="center_deadband_px"      value="35.0" />

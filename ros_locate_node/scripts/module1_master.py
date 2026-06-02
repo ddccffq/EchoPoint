@@ -11,7 +11,13 @@ import rospy
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, Float64, Float64MultiArray, String
-from std_srvs.srv import SetBool
+
+try:
+    from ros_find_node.srv import PointingTask
+    _POINTING_TASK_AVAILABLE = True
+except ImportError:
+    PointingTask = None
+    _POINTING_TASK_AVAILABLE = False
 
 try:
     from ros_AIUI_node.srv import textToSpeak
@@ -68,10 +74,16 @@ class Module1Master(object):
         self.forward_gain = float(rospy.get_param("~forward_gain", 0.25))
         self.min_forward_step = float(rospy.get_param("~min_forward_step", 0.02))
         self.search_max_steps = int(rospy.get_param("~search_max_steps", 36))
+        self.mid_turn_min_area_ratio = float(rospy.get_param("~mid_turn_min_area_ratio", 0.01))
         self.gait_handshake_timeout = float(rospy.get_param("~gait_handshake_timeout", 20.0))
         self.wait_stop_timeout = float(rospy.get_param("~wait_stop_timeout", 10.0))
         self.control_id = int(rospy.get_param("~control_id", 30))
         self.module2_timeout = float(rospy.get_param("~module2_timeout", 60.0))
+        self.module2_wait_timeout = float(rospy.get_param("~module2_wait_timeout", 10.0))
+        self.module2_service = rospy.get_param(
+            "~module2_service", "/ros_find_node/pointing_task"
+        )
+        self.sound_offset = float(rospy.get_param("~sound_offset", 0.0))
 
         self.hsv_lower1 = self._load_hsv_param("~hsv_lower1", [0, 80, 50])
         self.hsv_upper1 = self._load_hsv_param("~hsv_upper1", [12, 255, 255])
@@ -188,20 +200,38 @@ class Module1Master(object):
             rospy.logwarn("TTS ros exception: %s", exc)
 
     def _call_module2_and_wait(self):
-        rospy.loginfo("Waiting for module2 service /module2/done...")
-        try:
-            rospy.wait_for_service("/module2/done", timeout=3.0)
-        except rospy.ROSException:
-            rospy.logwarn("Module2 service /module2/done not started within 3s, skipping")
+        if not _POINTING_TASK_AVAILABLE or PointingTask is None:
+            rospy.logwarn("ros_find_node/PointingTask is not importable, skipping module2")
             return
 
-        client = rospy.ServiceProxy("/module2/done", SetBool)
+        rospy.loginfo("Waiting for module2 service %s...", self.module2_service)
         try:
-            resp = client(True)
+            rospy.wait_for_service(self.module2_service, timeout=self.module2_wait_timeout)
+        except rospy.ROSException:
+            rospy.logwarn(
+                "Module2 service %s not started within %.1fs, skipping",
+                self.module2_service,
+                self.module2_wait_timeout,
+            )
+            return
+
+        client = rospy.ServiceProxy(self.module2_service, PointingTask)
+        try:
+            resp = client(True, "module1_target_reached")
             if resp.success:
-                rospy.loginfo("Module2 & 3 completed successfully: %s", resp.message)
+                rospy.loginfo(
+                    "Module2 & 3 completed successfully: %s image=%s",
+                    resp.message,
+                    resp.image_path,
+                )
+                if resp.description:
+                    rospy.loginfo("Langchain description: %s", resp.description)
             else:
-                rospy.logwarn("Module2 returned failure: %s", resp.message)
+                rospy.logwarn(
+                    "Module2 returned failure: %s %s",
+                    resp.message,
+                    resp.error_msg,
+                )
         except rospy.ROSException:
             rospy.logwarn(
                 "Module2 service timeout (%.1fs), proceeding to idle",
@@ -225,18 +255,21 @@ class Module1Master(object):
             rospy.logwarn("Failed to parse wakeup payload %r: %s", msg.data, exc)
             return
 
+        raw_angle = angle
+        corrected = self._normalize_angle(raw_angle + self.sound_offset)
         with self.lock:
             if self.state != self.STATE_IDLE:
                 rospy.logwarn("Wakeup ignored while state=%s", self.state)
                 return
-            self.pending_sound_angle = -self._normalize_angle(angle)
+            self.pending_sound_angle = -corrected
             self.search_step_count = 0
 
         pending = self.pending_sound_angle
         rospy.loginfo(
-            "[WAKEUP] raw_angle=%.2f, normalized=%.2f, pending(negated)=%.2f",
-            angle,
-            self._normalize_angle(angle),
+            "[WAKEUP] raw_angle=%.2f, offset=%.1f, corrected=%.2f, pending(negated)=%.2f",
+            raw_angle,
+            self.sound_offset,
+            corrected,
             pending,
         )
 
@@ -309,6 +342,17 @@ class Module1Master(object):
                 self.search_step_count = 0
                 self.state = self.STATE_VISION_LOCK
             rospy.loginfo("[FSM] -> STATE_VISION_LOCK (sound angle cleared)")
+            return
+
+        if self._check_target_in_view():
+            rospy.loginfo(
+                "Target spotted mid-turn at angle %.1f deg, going to VISION_LOCK early",
+                angle,
+            )
+            with self.lock:
+                self.pending_sound_angle = None
+                self.search_step_count = 0
+                self.state = self.STATE_VISION_LOCK
             return
 
         step_theta = self._clamp(angle, -self.MAX_THETA, self.MAX_THETA)
@@ -468,6 +512,21 @@ class Module1Master(object):
         cx = moments["m10"] / moments["m00"]
         cy = moments["m01"] / moments["m00"]
         return cx, cy, area_ratio
+
+    def _check_target_in_view(self):
+        frame = self._get_latest_frame()
+        if frame is None:
+            return False
+        target = self._detect_target(frame)
+        if target is None:
+            return False
+        cx, cy, area_ratio = target
+        if area_ratio < self.mid_turn_min_area_ratio:
+            return False
+        h, w = frame.shape[:2]
+        if cx < w * 0.25 or cx > w * 0.75:
+            return False
+        return True
 
     def _publish_gait(self, dx, dy, theta):
         safe_dx = self._clamp(dx, -self.MAX_DX, self.MAX_DX)
