@@ -30,7 +30,7 @@
     <param name="search_pan_step" value="8.0" />
     <rosparam param="search_tilt_levels">[-10.0, 0.0, 10.0]</rosparam>
     <param name="enable_body_search" value="true" />
-    <param name="body_search_step_degrees" value="30.0" />
+    <param name="body_search_step_degrees" value="10.0" />
     <param name="body_search_total_degrees" value="360.0" />
     <rosparam param="body_search_head_pans">[-45.0, 0.0, 45.0]</rosparam>
     <param name="walking_status_topic" value="/MediumSize/BodyHub/WalkingStatus" />
@@ -52,6 +52,6 @@
     <param name="pan_max" value="90.0" />
     <param name="tilt_min" value="-25.0" />
     <param name="tilt_max" value="25.0" />
-    <param name="control_id" value="2" />
+    <param name="control_id" value="30" />
   </node>
 </launch>
