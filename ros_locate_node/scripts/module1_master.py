@@ -315,6 +315,17 @@ class Module1Master(object):
             rospy.loginfo("[FSM] -> STATE_VISION_LOCK (sound angle cleared)")
             return
 
+        if self._check_target_in_view():
+            rospy.loginfo(
+                "Target spotted mid-turn at angle %.1f deg, going to VISION_LOCK early",
+                angle,
+            )
+            with self.lock:
+                self.pending_sound_angle = None
+                self.search_step_count = 0
+                self.state = self.STATE_VISION_LOCK
+            return
+
         step_theta = self._clamp(angle, -self.MAX_THETA, self.MAX_THETA)
         remaining = self._normalize_angle(angle - step_theta)
         with self.lock:
@@ -472,6 +483,12 @@ class Module1Master(object):
         cx = moments["m10"] / moments["m00"]
         cy = moments["m01"] / moments["m00"]
         return cx, cy, area_ratio
+
+    def _check_target_in_view(self):
+        frame = self._get_latest_frame()
+        if frame is None:
+            return False
+        return self._detect_target(frame) is not None
 
     def _publish_gait(self, dx, dy, theta):
         safe_dx = self._clamp(dx, -self.MAX_DX, self.MAX_DX)
