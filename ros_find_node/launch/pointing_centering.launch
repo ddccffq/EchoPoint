@@ -27,9 +27,13 @@
     <param name="tolerance_y" value="30.0" />
     <param name="stable_frames" value="5" />
 
-    <param name="min_hand_area" value="2500.0" />
-    <param name="min_finger_distance" value="45.0" />
     <param name="pointing_extension" value="2.5" />
+    <param name="max_num_hands" value="1" />
+    <param name="mediapipe_model_complexity" value="0" />
+    <param name="min_detection_confidence" value="0.6" />
+    <param name="min_tracking_confidence" value="0.5" />
+    <param name="require_index_extended" value="true" />
+    <param name="min_index_length" value="45.0" />
     <param name="target_edge_margin" value="35.0" />
     <param name="target_confirm_frames" value="3" />
     <param name="max_target_jump" value="90.0" />
