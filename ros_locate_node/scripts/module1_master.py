@@ -74,6 +74,7 @@ class Module1Master(object):
         self.forward_gain = float(rospy.get_param("~forward_gain", 0.25))
         self.min_forward_step = float(rospy.get_param("~min_forward_step", 0.02))
         self.search_max_steps = int(rospy.get_param("~search_max_steps", 36))
+        self.mid_turn_min_area_ratio = float(rospy.get_param("~mid_turn_min_area_ratio", 0.01))
         self.gait_handshake_timeout = float(rospy.get_param("~gait_handshake_timeout", 20.0))
         self.wait_stop_timeout = float(rospy.get_param("~wait_stop_timeout", 10.0))
         self.control_id = int(rospy.get_param("~control_id", 30))
@@ -516,7 +517,16 @@ class Module1Master(object):
         frame = self._get_latest_frame()
         if frame is None:
             return False
-        return self._detect_target(frame) is not None
+        target = self._detect_target(frame)
+        if target is None:
+            return False
+        cx, cy, area_ratio = target
+        if area_ratio < self.mid_turn_min_area_ratio:
+            return False
+        h, w = frame.shape[:2]
+        if cx < w * 0.25 or cx > w * 0.75:
+            return False
+        return True
 
     def _publish_gait(self, dx, dy, theta):
         safe_dx = self._clamp(dx, -self.MAX_DX, self.MAX_DX)
