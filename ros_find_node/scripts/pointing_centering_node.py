@@ -23,6 +23,11 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
 
+try:
+    import mediapipe as mp
+except ImportError:
+    mp = None
+
 
 class PointingCenteringNode(object):
     def __init__(self):
@@ -44,6 +49,16 @@ class PointingCenteringNode(object):
         self.min_hand_area = float(rospy.get_param("~min_hand_area", 2500.0))
         self.min_finger_distance = float(rospy.get_param("~min_finger_distance", 45.0))
         self.pointing_extension = float(rospy.get_param("~pointing_extension", 2.5))
+        self.max_num_hands = int(rospy.get_param("~max_num_hands", 1))
+        self.mediapipe_model_complexity = int(rospy.get_param("~mediapipe_model_complexity", 0))
+        self.min_detection_confidence = float(
+            rospy.get_param("~min_detection_confidence", 0.6)
+        )
+        self.min_tracking_confidence = float(
+            rospy.get_param("~min_tracking_confidence", 0.5)
+        )
+        self.require_index_extended = bool(rospy.get_param("~require_index_extended", True))
+        self.min_index_length = float(rospy.get_param("~min_index_length", 45.0))
         self.target_edge_margin = float(rospy.get_param("~target_edge_margin", 35.0))
         self.target_confirm_frames = int(rospy.get_param("~target_confirm_frames", 3))
         self.max_target_jump = float(rospy.get_param("~max_target_jump", 90.0))
@@ -109,6 +124,11 @@ class PointingCenteringNode(object):
         self.tts_volume = int(rospy.get_param("~tts_volume", 50))
 
         self.bridge = CvBridge()
+        self.mp_hands = None
+        self.mp_drawing = None
+        self.mp_styles = None
+        self.mediapipe_warned = False
+        self.init_mediapipe()
         self.latest_image_msg = None
         self.latest_frame = None
         self.latest_debug_frame = None
@@ -138,6 +158,23 @@ class PointingCenteringNode(object):
         )
         self.start_server = rospy.Service(self.start_service, StartFind, self.handle_start)
         self.task_server = rospy.Service(self.task_service, PointingTask, self.handle_task)
+
+    def init_mediapipe(self):
+        if mp is None:
+            rospy.logerr(
+                "MediaPipe is not installed. Install it on the robot with: "
+                "python3 -m pip install mediapipe"
+            )
+            return
+        self.mp_hands = mp.solutions.hands.Hands(
+            static_image_mode=False,
+            max_num_hands=self.max_num_hands,
+            model_complexity=self.mediapipe_model_complexity,
+            min_detection_confidence=self.min_detection_confidence,
+            min_tracking_confidence=self.min_tracking_confidence,
+        )
+        self.mp_drawing = mp.solutions.drawing_utils
+        self.mp_styles = mp.solutions.drawing_styles
 
     def image_callback(self, msg):
         self.latest_image_msg = msg
@@ -347,54 +384,100 @@ class PointingCenteringNode(object):
         return mask
 
     def detect_pointing_target(self, frame):
-        mask = self.skin_mask(frame)
-        contours, _hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         debug = frame.copy()
-        if not contours:
+        if self.mp_hands is None:
+            if not self.mediapipe_warned:
+                rospy.logwarn("MediaPipe Hands is unavailable; cannot detect pointing finger.")
+                self.mediapipe_warned = True
             self.publish_debug(debug)
             return None
 
-        contour = max(contours, key=cv2.contourArea)
-        area = float(cv2.contourArea(contour))
-        if area < self.min_hand_area:
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb.flags.writeable = False
+        results = self.mp_hands.process(rgb)
+        rgb.flags.writeable = True
+
+        if not results.multi_hand_landmarks:
+            cv2.putText(
+                debug,
+                "no hand",
+                (12, 28),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 0, 255),
+                2,
+            )
             self.publish_debug(debug)
             return None
 
-        moments = cv2.moments(contour)
-        if moments["m00"] == 0:
+        height, width = frame.shape[:2]
+        best = None
+        best_score = -1.0
+        for hand_landmarks in results.multi_hand_landmarks:
+            landmarks = hand_landmarks.landmark
+            wrist = self.landmark_to_point(landmarks[0], width, height)
+            index_mcp = self.landmark_to_point(landmarks[5], width, height)
+            index_pip = self.landmark_to_point(landmarks[6], width, height)
+            index_tip = self.landmark_to_point(landmarks[8], width, height)
+            middle_tip = self.landmark_to_point(landmarks[12], width, height)
+            ring_tip = self.landmark_to_point(landmarks[16], width, height)
+            pinky_tip = self.landmark_to_point(landmarks[20], width, height)
+
+            direction = index_tip - index_mcp
+            index_length = float(np.linalg.norm(direction))
+            if index_length < self.min_index_length:
+                continue
+
+            if self.require_index_extended:
+                wrist_to_index = float(np.linalg.norm(index_tip - wrist))
+                wrist_to_middle = float(np.linalg.norm(middle_tip - wrist))
+                wrist_to_ring = float(np.linalg.norm(ring_tip - wrist))
+                wrist_to_pinky = float(np.linalg.norm(pinky_tip - wrist))
+                other_longest = max(wrist_to_middle, wrist_to_ring, wrist_to_pinky)
+                if wrist_to_index < other_longest * 0.9:
+                    continue
+
+                pip_to_tip = index_tip - index_pip
+                if float(np.dot(direction, pip_to_tip)) <= 0.0:
+                    continue
+
+            score = index_length
+            if score > best_score:
+                best_score = score
+                best = (hand_landmarks, index_mcp, index_pip, index_tip, direction, index_length)
+
+        if best is None:
+            cv2.putText(
+                debug,
+                "rejected: index not extended",
+                (12, 28),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 0, 255),
+                2,
+            )
+            for hand_landmarks in results.multi_hand_landmarks:
+                self.draw_hand(debug, hand_landmarks)
             self.publish_debug(debug)
             return None
-        palm_x = float(moments["m10"] / moments["m00"])
-        palm_y = float(moments["m01"] / moments["m00"])
 
-        hull = cv2.convexHull(contour, returnPoints=True)
-        points = hull.reshape(-1, 2).astype(np.float32)
-        palm = np.array([palm_x, palm_y], dtype=np.float32)
-        distances = np.linalg.norm(points - palm, axis=1)
-        tip = points[int(np.argmax(distances))]
-        tip_distance = float(np.max(distances))
-        if tip_distance < self.min_finger_distance:
-            self.publish_debug(debug)
-            return None
-
-        direction = tip - palm
+        hand_landmarks, index_mcp, index_pip, index_tip, direction, index_length = best
         norm = float(np.linalg.norm(direction))
         if norm < 1e-6:
             self.publish_debug(debug)
             return None
         direction = direction / norm
 
-        height, width = frame.shape[:2]
-        target = tip + direction * tip_distance * self.pointing_extension
+        target = index_tip + direction * index_length * self.pointing_extension
         target_x = self.clamp(float(target[0]), 0.0, float(width - 1))
         target_y = self.clamp(float(target[1]), 0.0, float(height - 1))
 
-        cv2.drawContours(debug, [contour], -1, (0, 255, 255), 2)
-        cv2.circle(debug, (int(palm_x), int(palm_y)), 6, (255, 0, 0), -1)
-        cv2.circle(debug, (int(tip[0]), int(tip[1])), 6, (0, 0, 255), -1)
+        self.draw_hand(debug, hand_landmarks)
+        cv2.circle(debug, tuple(index_mcp.astype(int)), 6, (255, 0, 0), -1)
+        cv2.circle(debug, tuple(index_tip.astype(int)), 6, (0, 0, 255), -1)
         cv2.line(
             debug,
-            (int(palm_x), int(palm_y)),
+            tuple(index_mcp.astype(int)),
             (int(target_x), int(target_y)),
             (0, 255, 0),
             2,
@@ -421,6 +504,26 @@ class PointingCenteringNode(object):
             return None
         self.publish_debug(debug)
         return target_x, target_y
+
+    def landmark_to_point(self, landmark, width, height):
+        return np.array(
+            [
+                self.clamp(float(landmark.x) * float(width), 0.0, float(width - 1)),
+                self.clamp(float(landmark.y) * float(height), 0.0, float(height - 1)),
+            ],
+            dtype=np.float32,
+        )
+
+    def draw_hand(self, debug, hand_landmarks):
+        if self.mp_drawing is None:
+            return
+        self.mp_drawing.draw_landmarks(
+            debug,
+            hand_landmarks,
+            mp.solutions.hands.HAND_CONNECTIONS,
+            self.mp_styles.get_default_hand_landmarks_style() if self.mp_styles else None,
+            self.mp_styles.get_default_hand_connections_style() if self.mp_styles else None,
+        )
 
     def is_edge_target(self, target_x, target_y, width, height):
         return (
