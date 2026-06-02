@@ -1,0 +1,8 @@
+bool start
+string request_id
+---
+bool success
+string message
+string image_path
+string description
+string error_msg

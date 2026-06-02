@@ -11,6 +11,7 @@ import mimetypes
 import threading
 
 import cv2
+
 try:
     import rospy
 except ImportError:
@@ -86,7 +87,7 @@ try:
         MAX_OUTPUT_TOKENS,
         STORE,
     )
-except ImportError as exc:  # pragma: no cover - depends on ROS / workspace path
+except ImportError as exc:
     ModelManagerLM = None
     image_to_data_url = None
     BASE_LOCAL_SERVER = None
@@ -106,11 +107,16 @@ else:
 class LangchainNode:
     def __init__(self):
         rospy.init_node("langchain_node")
+
+        if CvBridge is None:
+            raise RuntimeError("cv_bridge 不可用，无法启动 ROS 图像服务")
+
         self.bridge = CvBridge()
         self._manager_lock = threading.Lock()
 
         self.service_name = rospy.get_param("~service_name", "/langchain/describe_image")
         self.image_encoding = rospy.get_param("~image_encoding", "bgr8")
+
         self.enable_tts = bool(rospy.get_param("~enable_tts", True))
         self.tts_service_name = rospy.get_param("~tts_service_name", "/aiui/text_to_speak")
         self.tts_wait_timeout = float(rospy.get_param("~tts_wait_timeout", 3.0))
@@ -121,6 +127,13 @@ class LangchainNode:
         )
         self.temperature = float(rospy.get_param("~temperature", TEMPERATURE))
         self.max_output_tokens = int(rospy.get_param("~max_output_tokens", MAX_OUTPUT_TOKENS))
+
+        # 新增参数：
+        # True 表示每次 service 请求结束后自动卸载模型。
+        # 这样 LM Studio 端模型会在调用完成后 eject/unload。
+        self.auto_unload_after_request = bool(
+            rospy.get_param("~auto_unload_after_request", True)
+        )
 
         self.manager = None
 
@@ -140,6 +153,7 @@ class LangchainNode:
 
         svc_cls = DescribeImage
         resp_cls = DescribeImageResponse
+
         if svc_cls is None or resp_cls is None:
             try:
                 mod = importlib.import_module("ros_langchain_node.srv")
@@ -148,20 +162,15 @@ class LangchainNode:
             except Exception as e:
                 svc_cls = None
                 resp_cls = None
-                if rospy is not None:
-                    rospy.logwarn("DescribeImage srv not importable: %s", e)
-                else:
-                    print("DescribeImage srv not importable:", e)
+                rospy.logwarn("DescribeImage srv not importable: %s", e)
 
-        if svc_cls is not None and resp_cls is not None and rospy is not None:
+        if svc_cls is not None and resp_cls is not None:
             self.response_cls = resp_cls
             self.server = rospy.Service(self.service_name, svc_cls, self.handle_describe)
             rospy.loginfo("Service ready: %s", self.service_name)
+            rospy.loginfo("auto_unload_after_request: %s", self.auto_unload_after_request)
         else:
-            if rospy is not None:
-                rospy.logwarn("DescribeImage service type not found; service not created")
-            else:
-                print("DescribeImage service type not found; service not created")
+            rospy.logwarn("DescribeImage service type not found; service not created")
 
         rospy.on_shutdown(self._shutdown)
 
@@ -171,15 +180,23 @@ class LangchainNode:
         return "未配置可用的模型后端或 model_manager 未就绪"
 
     def _get_manager(self) -> ModelManagerLM:
+        """
+        获取模型管理器。
+        如果当前没有 manager，则创建并加载模型。
+        """
         if self.manager is not None:
             return self.manager
 
         with self._manager_lock:
             if self.manager is None:
                 self.manager = self._build_and_load_manager()
+
         return self.manager
 
     def _build_and_load_manager(self) -> Optional[ModelManagerLM]:
+        """
+        创建 ModelManagerLM，并加载视觉模型。
+        """
         if ModelManagerLM is None:
             raise RuntimeError(self._agent_status())
 
@@ -206,15 +223,38 @@ class LangchainNode:
         except Exception as exc:
             raise RuntimeError(f"模型加载失败：{exc}") from exc
 
+    def _unload_manager(self):
+        """
+        卸载当前已加载的模型。
+
+        这个函数会调用 self.manager.unload()。
+        如果 model_manager.py 里的 unload() 对应 LM Studio 的 unload/eject 接口，
+        那么这里执行后，LM Studio 侧模型就会被卸载。
+        """
+        with self._manager_lock:
+            if self.manager is None:
+                return
+
+            try:
+                rospy.loginfo("正在卸载模型：%s", self.base_vision_model_identifier)
+                self.manager.unload()
+                rospy.loginfo("模型已卸载：%s", self.base_vision_model_identifier)
+            except Exception as exc:
+                rospy.logwarn("卸载模型时出错：%s", exc)
+            finally:
+                self.manager = None
+
     def _data_url_from_cv_image(self, cv_img) -> str:
         ok, encoded = cv2.imencode(".png", cv_img)
         if not ok:
             raise RuntimeError("图像编码失败")
+
         return self._data_url_from_bytes(encoded.tobytes(), "image/png")
 
     def _data_url_from_bytes(self, image_bytes: bytes, mime: str) -> str:
         if not image_bytes:
             raise ValueError("输入图像字节为空")
+
         data_b64 = base64.b64encode(image_bytes).decode("ascii")
         return f"data:{mime or 'image/png'};base64,{data_b64}"
 
@@ -223,7 +263,16 @@ class LangchainNode:
         return self._data_url_from_bytes(path.read_bytes(), mime)
 
     def _data_url_from_request(self, req) -> str:
+        """
+        从 service 请求中提取图像。
+
+        优先级：
+        1. image_path
+        2. image_data
+        3. sensor_msgs/Image image
+        """
         image_path = getattr(req, "image_path", "")
+
         if image_path:
             path = Path(image_path).expanduser()
             if not path.exists():
@@ -232,18 +281,28 @@ class LangchainNode:
 
         image_data = bytes(getattr(req, "image_data", []) or [])
         if image_data:
-            return self._data_url_from_bytes(image_data, getattr(req, "image_mime", "image/png"))
+            return self._data_url_from_bytes(
+                image_data,
+                getattr(req, "image_mime", "image/png"),
+            )
 
         image_msg = getattr(req, "image", None)
         if image_msg is not None and getattr(image_msg, "data", None):
-            cv_img = self.bridge.imgmsg_to_cv2(image_msg, desired_encoding=self.image_encoding)
+            cv_img = self.bridge.imgmsg_to_cv2(
+                image_msg,
+                desired_encoding=self.image_encoding,
+            )
             if cv_img is None:
                 raise ValueError("输入 ROS Image 为空")
+
             return self._data_url_from_cv_image(cv_img)
 
         raise ValueError("请求中没有可用图像：请传入 image、image_path 或 image_data")
 
     def call_agent_with_image(self, data_url: str) -> str:
+        """
+        调用本地视觉语言模型，生成图像描述。
+        """
         manager = self._get_manager()
 
         input_prompt = [
@@ -273,15 +332,17 @@ class LangchainNode:
 
         return text.strip()
 
-    def _shutdown(self):
-        try:
-            if self.manager is not None:
-                self.manager.unload()
-                rospy.loginfo("已卸载模型实例")
-        except Exception as exc:
-            rospy.logwarn("卸载模型时出错：%s", exc)
-
     def speak(self, text):
+        """
+        调用外部 TTS service 朗读文本。
+
+        注意：
+        如果 /aiui/text_to_speak 是同步 service，
+        那么这个函数返回时可以认为朗读已经完成。
+
+        如果 /aiui/text_to_speak 内部只是把文本加入播放队列然后立即返回，
+        那么这里无法保证真实语音播放已经结束。
+        """
         if not self.enable_tts or self.tts_cli is None or not _TTS_AVAILABLE:
             rospy.loginfo("TTS 跳过：%s", text)
             return False
@@ -295,6 +356,14 @@ class LangchainNode:
             return False
 
     def handle_describe(self, req):
+        """
+        /langchain/describe_image 的 service 回调。
+
+        修改点：
+        - 原来模型只在节点关闭时卸载。
+        - 现在如果 auto_unload_after_request=True，
+          每次 service 请求结束后都会自动调用 self._unload_manager()。
+        """
         try:
             data_url = self._data_url_from_request(req)
             text = self.call_agent_with_image(data_url)
@@ -305,11 +374,23 @@ class LangchainNode:
                     rospy.logwarn("TTS 调用未成功，但图像描述已生成")
 
             return self.response_cls(True, text, "")
+
         except Exception as e:
             rospy.logerr("/langchain/describe_image 处理失败：%s", e)
             return self.response_cls(False, "", str(e))
 
-if __name__ == '__main__':
+        finally:
+            if self.auto_unload_after_request:
+                self._unload_manager()
+
+    def _shutdown(self):
+        """
+        节点关闭时兜底卸载模型。
+        """
+        self._unload_manager()
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ROS/local LM image description node")
     parser.add_argument(
         "--standalone-test",
@@ -327,12 +408,15 @@ if __name__ == '__main__':
         if rospy is None or CvBridge is None:
             print("rospy/cv_bridge is not available, cannot run as a ROS node.")
             raise SystemExit(1)
+
         LangchainNode()
         rospy.spin()
+
     else:
-        print("Running standalone test mode (no ROS service).")
+        print("Running standalone test mode no ROS service.")
+
         if ModelManagerLM is None:
-            print("ModelManagerLM not available (could not import). Exiting.")
+            print("ModelManagerLM not available could not import. Exiting.")
             raise SystemExit(1)
 
         test_image_path = Path(args.image)
@@ -382,8 +466,11 @@ if __name__ == '__main__':
                 out = str(resp)
 
             print("Model response:\n", out)
+
         finally:
             try:
+                print("Unloading model...")
                 mgr.unload()
-            except Exception:
-                pass
+                print("Model unloaded.")
+            except Exception as exc:
+                print(f"Unload failed: {exc}")

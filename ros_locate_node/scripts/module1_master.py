@@ -11,7 +11,13 @@ import rospy
 from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, Float64, Float64MultiArray, String
-from std_srvs.srv import SetBool
+
+try:
+    from ros_find_node.srv import PointingTask
+    _POINTING_TASK_AVAILABLE = True
+except ImportError:
+    PointingTask = None
+    _POINTING_TASK_AVAILABLE = False
 
 try:
     from ros_AIUI_node.srv import textToSpeak
@@ -72,6 +78,10 @@ class Module1Master(object):
         self.wait_stop_timeout = float(rospy.get_param("~wait_stop_timeout", 10.0))
         self.control_id = int(rospy.get_param("~control_id", 30))
         self.module2_timeout = float(rospy.get_param("~module2_timeout", 60.0))
+        self.module2_wait_timeout = float(rospy.get_param("~module2_wait_timeout", 10.0))
+        self.module2_service = rospy.get_param(
+            "~module2_service", "/ros_find_node/pointing_task"
+        )
         self.sound_offset = float(rospy.get_param("~sound_offset", 0.0))
 
         self.hsv_lower1 = self._load_hsv_param("~hsv_lower1", [0, 80, 50])
@@ -189,20 +199,38 @@ class Module1Master(object):
             rospy.logwarn("TTS ros exception: %s", exc)
 
     def _call_module2_and_wait(self):
-        rospy.loginfo("Waiting for module2 service /module2/done...")
-        try:
-            rospy.wait_for_service("/module2/done", timeout=3.0)
-        except rospy.ROSException:
-            rospy.logwarn("Module2 service /module2/done not started within 3s, skipping")
+        if not _POINTING_TASK_AVAILABLE or PointingTask is None:
+            rospy.logwarn("ros_find_node/PointingTask is not importable, skipping module2")
             return
 
-        client = rospy.ServiceProxy("/module2/done", SetBool)
+        rospy.loginfo("Waiting for module2 service %s...", self.module2_service)
         try:
-            resp = client(True)
+            rospy.wait_for_service(self.module2_service, timeout=self.module2_wait_timeout)
+        except rospy.ROSException:
+            rospy.logwarn(
+                "Module2 service %s not started within %.1fs, skipping",
+                self.module2_service,
+                self.module2_wait_timeout,
+            )
+            return
+
+        client = rospy.ServiceProxy(self.module2_service, PointingTask)
+        try:
+            resp = client(True, "module1_target_reached")
             if resp.success:
-                rospy.loginfo("Module2 & 3 completed successfully: %s", resp.message)
+                rospy.loginfo(
+                    "Module2 & 3 completed successfully: %s image=%s",
+                    resp.message,
+                    resp.image_path,
+                )
+                if resp.description:
+                    rospy.loginfo("Langchain description: %s", resp.description)
             else:
-                rospy.logwarn("Module2 returned failure: %s", resp.message)
+                rospy.logwarn(
+                    "Module2 returned failure: %s %s",
+                    resp.message,
+                    resp.error_msg,
+                )
         except rospy.ROSException:
             rospy.logwarn(
                 "Module2 service timeout (%.1fs), proceeding to idle",

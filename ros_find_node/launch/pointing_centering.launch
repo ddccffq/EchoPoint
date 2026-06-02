@@ -2,6 +2,9 @@
   <arg name="image_topic" default="/camera/color/image_raw" />
   <arg name="output_dir" default="$(find ros_find_node)/pointing_snapshots" />
   <arg name="wait_for_start_service" default="true" />
+  <arg name="start_service" default="/ros_find_node/start_pointing" />
+  <arg name="task_service" default="/ros_find_node/pointing_task" />
+  <arg name="describe_image_service" default="/langchain/describe_image" />
 
   <node pkg="ros_find_node"
         type="pointing_centering_node.py"
@@ -14,7 +17,9 @@
     <param name="exit_after_capture" value="false" />
 
     <param name="wait_for_start_service" value="$(arg wait_for_start_service)" />
-    <param name="start_service" value="/ros_find_node/start_pointing" />
+    <param name="start_service" value="$(arg start_service)" />
+    <param name="task_service" value="$(arg task_service)" />
+    <param name="task_wait_timeout" value="180.0" />
 
     <param name="center_x" value="320.0" />
     <param name="center_y" value="240.0" />
@@ -41,7 +46,7 @@
     <param name="stop_recording_service" value="/aiui/stop_recording" />
     <param name="pause_head_toward_sound_service" value="/aiui/pause_head_toward_sound" />
     <param name="call_describe_service" value="true" />
-    <param name="describe_image_service" value="/langchain/describe_image" />
+    <param name="describe_image_service" value="$(arg describe_image_service)" />
     <param name="describe_service_timeout" value="5.0" />
     <param name="describe_image_speak" value="true" />
     <param name="speech_timeout" value="8.0" />

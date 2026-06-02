@@ -13,7 +13,12 @@ from bodyhub.msg import JointControlPoint
 from bodyhub.srv import SrvTLSstring
 from cv_bridge import CvBridge
 from ros_AIUI_node.srv import SrvWakeupMute, textToSpeakMultipleOptions
-from ros_find_node.srv import StartFind, StartFindResponse
+from ros_find_node.srv import (
+    PointingTask,
+    PointingTaskResponse,
+    StartFind,
+    StartFindResponse,
+)
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
@@ -70,6 +75,10 @@ class PointingCenteringNode(object):
 
         self.wait_for_start_service = bool(rospy.get_param("~wait_for_start_service", True))
         self.start_service = rospy.get_param("~start_service", "/ros_find_node/start_pointing")
+        self.task_service = rospy.get_param(
+            "~task_service", "/ros_find_node/pointing_task"
+        )
+        self.task_wait_timeout = float(rospy.get_param("~task_wait_timeout", 180.0))
 
         self.enable_voice_commands = bool(rospy.get_param("~enable_voice_commands", True))
         self.tts_service = rospy.get_param("~tts_service", "/aiui/text_to_speak_multiple_options")
@@ -99,7 +108,15 @@ class PointingCenteringNode(object):
         self.latest_frame = None
         self.latest_debug_frame = None
         self.captured_image_msg = None
+        self.captured_image_path = ""
+        self.last_description = ""
         self.workflow_active = False
+        self.workflow_lock = threading.Lock()
+        self.workflow_done_event = threading.Event()
+        self.workflow_result = self._make_workflow_result(
+            False,
+            "pointing task has not run yet",
+        )
         self.start_event = threading.Event()
         if not self.wait_for_start_service:
             self.start_event.set()
@@ -112,6 +129,7 @@ class PointingCenteringNode(object):
             self.image_topic, Image, self.image_callback, queue_size=1
         )
         self.start_server = rospy.Service(self.start_service, StartFind, self.handle_start)
+        self.task_server = rospy.Service(self.task_service, PointingTask, self.handle_task)
 
     def image_callback(self, msg):
         self.latest_image_msg = msg
@@ -123,10 +141,91 @@ class PointingCenteringNode(object):
     def handle_start(self, request):
         if not request.start:
             return StartFindResponse(False, "start is false, pointing node ignored the request")
-        if self.workflow_active:
+        if self.is_workflow_active():
             return StartFindResponse(False, "pointing node is already running")
         self.start_event.set()
         return StartFindResponse(True, "pointing centering started")
+
+    def handle_task(self, request):
+        if not request.start:
+            return PointingTaskResponse(
+                False,
+                "start is false, pointing task ignored the request",
+                "",
+                "",
+                "start is false",
+            )
+        if self.is_workflow_active():
+            return PointingTaskResponse(
+                False,
+                "pointing node is already running",
+                "",
+                "",
+                "workflow is active",
+            )
+
+        request_id = request.request_id or "module1"
+        rospy.loginfo("Received pointing task request: %s", request_id)
+        self.reset_workflow_result("pointing task is running", active=True)
+        self.start_event.set()
+
+        completed = self.workflow_done_event.wait(self.task_wait_timeout)
+        if not completed:
+            return PointingTaskResponse(
+                False,
+                "pointing task timeout",
+                "",
+                "",
+                "timeout after %.1fs" % self.task_wait_timeout,
+            )
+
+        result = self.get_workflow_result()
+        return PointingTaskResponse(
+            bool(result["success"]),
+            result["message"],
+            result["image_path"],
+            result["description"],
+            result["error_msg"],
+        )
+
+    def is_workflow_active(self):
+        with self.workflow_lock:
+            return self.workflow_active
+
+    def set_workflow_active(self, active):
+        with self.workflow_lock:
+            self.workflow_active = active
+
+    def _make_workflow_result(self, success, message, image_path="", description="", error_msg=""):
+        return {
+            "success": bool(success),
+            "message": message or "",
+            "image_path": image_path or "",
+            "description": description or "",
+            "error_msg": error_msg or "",
+        }
+
+    def reset_workflow_result(self, message, active=False):
+        with self.workflow_lock:
+            self.workflow_done_event.clear()
+            self.workflow_result = self._make_workflow_result(False, message)
+            self.workflow_active = bool(active)
+
+    def finish_workflow(self, success, message, image_path="", description="", error_msg=""):
+        with self.workflow_lock:
+            self.workflow_active = False
+            self.workflow_result = self._make_workflow_result(
+                success,
+                message,
+                image_path,
+                description,
+                error_msg,
+            )
+            self.workflow_done_event.set()
+
+    def get_workflow_result(self):
+        with self.workflow_lock:
+            return dict(self.workflow_result)
 
     def wait_for_start(self):
         if not self.wait_for_start_service:
@@ -356,16 +455,16 @@ class PointingCenteringNode(object):
     def call_describe_image(self):
         if not self.call_describe_service:
             rospy.loginfo("Describe image service call is disabled.")
-            return True
+            return True, "", ""
         if self.captured_image_msg is None:
             rospy.logerr("No captured image message is available for describe image service.")
-            return False
+            return False, "", "No captured image message is available."
 
         try:
             from ros_langchain_node.srv import DescribeImage, DescribeImageRequest
         except ImportError as err:
             rospy.logerr("Cannot import ros_langchain_node/DescribeImage: %s", err)
-            return False
+            return False, "", str(err)
 
         try:
             rospy.loginfo("Waiting for describe image service: %s", self.describe_image_service)
@@ -377,12 +476,13 @@ class PointingCenteringNode(object):
             response = client(request)
             if response.success:
                 rospy.loginfo("Describe image service succeeded: %s", response.text)
+                self.last_description = response.text
             else:
                 rospy.logwarn("Describe image service failed: %s", response.error_msg)
-            return bool(response.success)
+            return bool(response.success), response.text, response.error_msg
         except Exception as err:
             rospy.logerr("Describe image service call failed: %s", err)
-            return False
+            return False, "", str(err)
 
     def run(self):
         rate = rospy.Rate(self.rate_hz)
@@ -391,14 +491,16 @@ class PointingCenteringNode(object):
             if not self.wait_for_start():
                 return
 
-            self.workflow_active = True
+            self.set_workflow_active(True)
             self.captured_image_msg = None
+            self.captured_image_path = ""
+            self.last_description = ""
             self.update_control_id()
             self.publish_head()
             stable_count = 0
             lost_count = 0
 
-            while not rospy.is_shutdown() and self.workflow_active:
+            while not rospy.is_shutdown() and self.is_workflow_active():
                 if self.latest_frame is None:
                     rate.sleep()
                     continue
@@ -437,10 +539,12 @@ class PointingCenteringNode(object):
                             time.sleep(0.5)
                             try:
                                 self.captured_image_msg = self.latest_image_msg
-                                self.capture_snapshot()
+                                self.captured_image_path = self.capture_snapshot()
                                 self.speak(self.screenshot_done_text)
                             except Exception as err:
                                 rospy.logerr("Snapshot failed: %s", err)
+                                self.finish_workflow(False, "snapshot failed", error_msg=str(err))
+                                break
 
                         next_action = self.wait_for_next_action()
                         if next_action == "restart":
@@ -449,8 +553,19 @@ class PointingCenteringNode(object):
                             lost_count = 0
                             continue
 
-                        self.call_describe_image()
-                        self.workflow_active = False
+                        success, description, error_msg = self.call_describe_image()
+                        message = (
+                            "pointing task completed"
+                            if success
+                            else "pointing task completed but describe image failed"
+                        )
+                        self.finish_workflow(
+                            success,
+                            message,
+                            self.captured_image_path,
+                            description,
+                            error_msg,
+                        )
                         if self.exit_after_capture and not self.wait_for_start_service:
                             return
                         break
@@ -469,6 +584,9 @@ class PointingCenteringNode(object):
                     self.publish_head()
 
                 rate.sleep()
+
+            if rospy.is_shutdown() and self.is_workflow_active():
+                self.finish_workflow(False, "ROS shutdown", error_msg="ROS shutdown")
 
 
 if __name__ == "__main__":

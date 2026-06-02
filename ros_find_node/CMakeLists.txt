@@ -17,12 +17,26 @@ find_package(catkin REQUIRED COMPONENTS
 add_service_files(
   FILES
   StartFind.srv
+  PointingTask.srv
 )
 
-generate_messages()
+generate_messages(
+  DEPENDENCIES
+  std_msgs
+)
 
 catkin_package(
-  CATKIN_DEPENDS message_runtime
+  CATKIN_DEPENDS
+    rospy
+    std_msgs
+    sensor_msgs
+    cv_bridge
+    bodyhub
+    ros_vision_node
+    ros_AIUI_node
+    ros_langchain_node
+    std_srvs
+    message_runtime
 )
 
 catkin_install_python(PROGRAMS
