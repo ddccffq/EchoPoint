@@ -44,6 +44,10 @@ class PointingCenteringNode(object):
         self.min_hand_area = float(rospy.get_param("~min_hand_area", 2500.0))
         self.min_finger_distance = float(rospy.get_param("~min_finger_distance", 45.0))
         self.pointing_extension = float(rospy.get_param("~pointing_extension", 2.5))
+        self.target_edge_margin = float(rospy.get_param("~target_edge_margin", 35.0))
+        self.target_confirm_frames = int(rospy.get_param("~target_confirm_frames", 3))
+        self.max_target_jump = float(rospy.get_param("~max_target_jump", 90.0))
+        self.target_smoothing = float(rospy.get_param("~target_smoothing", 0.35))
 
         self.enable_search = bool(rospy.get_param("~enable_search", True))
         self.search_start_frames = int(rospy.get_param("~search_start_frames", 5))
@@ -64,6 +68,7 @@ class PointingCenteringNode(object):
         self.pan_max = float(rospy.get_param("~pan_max", 90.0))
         self.tilt_min = float(rospy.get_param("~tilt_min", -25.0))
         self.tilt_max = float(rospy.get_param("~tilt_max", 25.0))
+        self.max_head_step = float(rospy.get_param("~max_head_step", 2.0))
         self.pan = float(rospy.get_param("~initial_pan", 0.0))
         self.tilt = float(rospy.get_param("~initial_tilt", 0.0))
 
@@ -108,6 +113,9 @@ class PointingCenteringNode(object):
         self.latest_frame = None
         self.latest_debug_frame = None
         self.captured_image_msg = None
+        self.filtered_target = None
+        self.pending_target = None
+        self.pending_target_count = 0
         self.captured_image_path = ""
         self.last_description = ""
         self.workflow_active = False
@@ -256,6 +264,9 @@ class PointingCenteringNode(object):
     def clamp(self, value, lower, upper):
         return max(lower, min(upper, value))
 
+    def clamp_step(self, value, max_step):
+        return self.clamp(value, -max_step, max_step)
+
     def publish_head(self):
         msg = JointControlPoint()
         msg.positions = [self.pan, -self.tilt]
@@ -396,8 +407,68 @@ class PointingCenteringNode(object):
             markerSize=24,
             thickness=2,
         )
+        if self.is_edge_target(target_x, target_y, width, height):
+            cv2.putText(
+                debug,
+                "rejected: edge target",
+                (12, 28),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 0, 255),
+                2,
+            )
+            self.publish_debug(debug)
+            return None
         self.publish_debug(debug)
         return target_x, target_y
+
+    def is_edge_target(self, target_x, target_y, width, height):
+        return (
+            target_x <= self.target_edge_margin
+            or target_x >= float(width - 1) - self.target_edge_margin
+            or target_y <= self.target_edge_margin
+            or target_y >= float(height - 1) - self.target_edge_margin
+        )
+
+    def stabilize_target(self, target):
+        target_vec = np.array(target, dtype=np.float32)
+        if self.filtered_target is not None:
+            jump = float(np.linalg.norm(target_vec - self.filtered_target))
+            if jump > self.max_target_jump:
+                rospy.logwarn(
+                    "Rejected unstable pointing target: target=(%.1f, %.1f), jump=%.1f",
+                    target[0],
+                    target[1],
+                    jump,
+                )
+                self.pending_target = target_vec
+                self.pending_target_count = 1
+                return None
+            alpha = self.clamp(self.target_smoothing, 0.0, 1.0)
+            self.filtered_target = alpha * target_vec + (1.0 - alpha) * self.filtered_target
+            return float(self.filtered_target[0]), float(self.filtered_target[1])
+
+        if self.pending_target is None:
+            self.pending_target = target_vec
+            self.pending_target_count = 1
+            return None
+
+        jump = float(np.linalg.norm(target_vec - self.pending_target))
+        if jump <= self.max_target_jump:
+            self.pending_target_count += 1
+            self.pending_target = (
+                target_vec + self.pending_target * float(self.pending_target_count - 1)
+            ) / float(self.pending_target_count)
+        else:
+            self.pending_target = target_vec
+            self.pending_target_count = 1
+            return None
+
+        if self.pending_target_count < self.target_confirm_frames:
+            return None
+
+        self.filtered_target = self.pending_target
+        return float(self.filtered_target[0]), float(self.filtered_target[1])
 
     def publish_debug(self, debug):
         self.latest_debug_frame = debug
@@ -493,6 +564,9 @@ class PointingCenteringNode(object):
 
             self.set_workflow_active(True)
             self.captured_image_msg = None
+            self.filtered_target = None
+            self.pending_target = None
+            self.pending_target_count = 0
             self.captured_image_path = ""
             self.last_description = ""
             self.update_control_id()
@@ -512,6 +586,12 @@ class PointingCenteringNode(object):
                     if lost_count % self.max_lost_frames == 0:
                         rospy.logwarn("Pointing hand not found. Check lighting and background.")
                     self.search_for_pointer(lost_count)
+                    rate.sleep()
+                    continue
+
+                target = self.stabilize_target(target)
+                if target is None:
+                    stable_count = 0
                     rate.sleep()
                     continue
 
@@ -573,11 +653,15 @@ class PointingCenteringNode(object):
                     stable_count = 0
                     if abs(error_x) > self.tolerance_x:
                         self.pan = self.clamp(
-                            self.pan + self.pan_gain * error_x, self.pan_min, self.pan_max
+                            self.pan
+                            + self.clamp_step(self.pan_gain * error_x, self.max_head_step),
+                            self.pan_min,
+                            self.pan_max,
                         )
                     if abs(error_y) > self.tolerance_y:
                         self.tilt = self.clamp(
-                            self.tilt + self.tilt_gain * error_y,
+                            self.tilt
+                            + self.clamp_step(self.tilt_gain * error_y, self.max_head_step),
                             self.tilt_min,
                             self.tilt_max,
                         )
