@@ -2,15 +2,20 @@
 # -*- coding: utf-8 -*-
 
 import ast
-import math
 import threading
 
 import cv2
 import numpy as np
 import rospy
 from cv_bridge import CvBridge, CvBridgeError
+from bodyhub.srv import SrvTLSstring
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, Float64, Float64MultiArray, String
+
+try:
+    unicode
+except NameError:
+    unicode = str
 
 try:
     from ros_find_node.srv import StartFind
@@ -41,6 +46,12 @@ class Module1Master(object):
     MAX_DX = 0.1
     MAX_DY = 0.05
     MAX_THETA = 10.0
+
+    @staticmethod
+    def _to_ros_string(text):
+        if isinstance(text, unicode):
+            return text.encode("utf-8")
+        return text
 
     def __init__(self):
         self.bridge = CvBridge()
@@ -144,6 +155,44 @@ class Module1Master(object):
             "yes" if self._bodyhub else "no",
         )
 
+    def _create_bodyhub_client(self):
+        if not _BODYHUB_AVAILABLE:
+            return None
+        try:
+            client = BodyhubClient(self.control_id)
+            rospy.loginfo("BodyhubClient created with control_id=%d", self.control_id)
+            return client
+        except Exception as exc:
+            rospy.logerr("Failed to create BodyhubClient: %s", exc)
+            return None
+
+    def _refresh_bodyhub_client(self):
+        if not _BODYHUB_AVAILABLE:
+            return
+
+        try:
+            rospy.wait_for_service("/MediumSize/BodyHub/GetMasterID", timeout=2.0)
+            client = rospy.ServiceProxy("/MediumSize/BodyHub/GetMasterID", SrvTLSstring)
+            response = client("get")
+            current_id = int(response.data)
+        except Exception as exc:
+            rospy.logwarn("Could not refresh BodyHub control id: %s", exc)
+            return
+
+        if current_id == 0 or current_id == self.control_id:
+            if self._bodyhub is None:
+                self._bodyhub = self._create_bodyhub_client()
+            return
+
+        rospy.logwarn(
+            "BodyHub is currently owned by id=%d; switching module1 control_id from %d to %d",
+            current_id,
+            self.control_id,
+            current_id,
+        )
+        self.control_id = current_id
+        self._bodyhub = self._create_bodyhub_client()
+
     def _on_shutdown(self):
         rospy.loginfo("module1_master shutting down, releasing BodyHub control")
         self._bodyhub_reset(force=True)
@@ -193,12 +242,14 @@ class Module1Master(object):
             rospy.logwarn("TTS skip (unavailable): %s", text)
             return
         try:
-            self._tts_client(text)
+            self._tts_client(self._to_ros_string(text))
             rospy.loginfo("TTS: %s", text)
         except rospy.ServiceException as exc:
             rospy.logwarn("TTS service call failed: %s", exc)
         except rospy.ROSException as exc:
             rospy.logwarn("TTS ros exception: %s", exc)
+        except Exception as exc:
+            rospy.logwarn("TTS unexpected exception: %s", exc)
 
     def _call_find_node(self):
         if not _START_FIND_AVAILABLE or StartFind is None:
@@ -262,6 +313,7 @@ class Module1Master(object):
             pending,
         )
 
+        self._refresh_bodyhub_client()
         if not self._bodyhub_walk():
             rospy.logerr("Cannot transition BodyHub to walking, wakeup ignored")
             return
@@ -607,7 +659,11 @@ class Module1Master(object):
 
     @staticmethod
     def _normalize_angle(angle):
-        if not math.isfinite(angle):
+        try:
+            angle = float(angle)
+        except (TypeError, ValueError):
+            return 0.0
+        if angle != angle or angle == float("inf") or angle == float("-inf"):
             return 0.0
         while angle > 180.0:
             angle -= 360.0

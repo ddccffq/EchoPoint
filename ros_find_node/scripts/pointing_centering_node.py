@@ -24,12 +24,23 @@ from std_msgs.msg import String
 from std_srvs.srv import Empty, SetBool
 
 try:
+    unicode
+except NameError:
+    unicode = str
+
+try:
     import mediapipe as mp
 except ImportError:
     mp = None
 
 
 class PointingCenteringNode(object):
+    @staticmethod
+    def to_ros_string(text):
+        if isinstance(text, unicode):
+            return text.encode("utf-8")
+        return text
+
     def __init__(self):
         self.image_topic = rospy.get_param("~image_topic", "/camera/color/image_raw")
         self.output_dir = os.path.expanduser(
@@ -328,7 +339,13 @@ class PointingCenteringNode(object):
         try:
             rospy.wait_for_service(self.tts_service, timeout=2.0)
             client = rospy.ServiceProxy(self.tts_service, textToSpeakMultipleOptions)
-            client(text, self.tts_vcn, self.tts_speed, self.tts_pitch, self.tts_volume)
+            client(
+                self.to_ros_string(text),
+                self.to_ros_string(self.tts_vcn),
+                self.tts_speed,
+                self.tts_pitch,
+                self.tts_volume,
+            )
         except Exception as err:
             rospy.logwarn("Text-to-speech failed: %s", err)
 

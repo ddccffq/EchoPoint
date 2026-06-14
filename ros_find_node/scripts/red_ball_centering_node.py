@@ -12,6 +12,11 @@ try:
 except ImportError:
     from urllib2 import urlopen
 
+try:
+    unicode
+except NameError:
+    unicode = str
+
 import rospy
 from bodyhub.msg import JointControlPoint
 from bodyhub.srv import SrvTLSstring
@@ -30,6 +35,12 @@ except ImportError:
 
 
 class RedBallCenteringNode(object):
+    @staticmethod
+    def to_ros_string(text):
+        if isinstance(text, unicode):
+            return text.encode("utf-8")
+        return text
+
     def __init__(self):
         self.image_topic = rospy.get_param("~image_topic", "/camera/color/image_raw")
         self.vision_service = rospy.get_param(
@@ -315,7 +326,13 @@ class RedBallCenteringNode(object):
         try:
             rospy.wait_for_service(self.tts_service, timeout=2.0)
             client = rospy.ServiceProxy(self.tts_service, textToSpeakMultipleOptions)
-            client(text, self.tts_vcn, self.tts_speed, self.tts_pitch, self.tts_volume)
+            client(
+                self.to_ros_string(text),
+                self.to_ros_string(self.tts_vcn),
+                self.tts_speed,
+                self.tts_pitch,
+                self.tts_volume,
+            )
         except Exception as err:
             rospy.logwarn("Text-to-speech failed: %s", err)
 

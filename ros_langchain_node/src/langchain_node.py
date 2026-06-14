@@ -17,6 +17,11 @@ except NameError:
     basestring = str
 
 try:
+    unicode
+except NameError:
+    unicode = str
+
+try:
     import rospy
 except ImportError:
     rospy = None
@@ -112,6 +117,12 @@ else:
 
 
 class LangchainNode:
+    @staticmethod
+    def _to_ros_string(text):
+        if isinstance(text, unicode):
+            return text.encode("utf-8")
+        return text
+
     def __init__(self):
         rospy.init_node("langchain_node")
 
@@ -369,11 +380,14 @@ class LangchainNode:
             return False
 
         try:
-            req = textToSpeakRequest(text=text)
+            req = textToSpeakRequest(text=self._to_ros_string(text))
             resp = self.tts_cli(req)
             return bool(getattr(resp, "is_success", False))
         except rospy.ServiceException as exc:
             rospy.logwarn("TTS 调用失败：%s", exc)
+            return False
+        except Exception as exc:
+            rospy.logwarn("TTS 调用异常：%s", exc)
             return False
 
     def handle_describe(self, req):
