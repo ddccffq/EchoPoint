@@ -1,16 +1,20 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import sys
 import argparse
-from pathlib import Path
-from typing import Optional
 import base64
 import importlib
 import mimetypes
+import os
 import threading
 
 import cv2
+
+try:
+    basestring
+except NameError:
+    basestring = str
 
 try:
     import rospy
@@ -34,29 +38,32 @@ except ImportError:
     rospkg = None
 
 
-def _ensure_package_src_on_path() -> None:
+def _ensure_package_src_on_path():
     candidate_paths = []
 
     if rospkg is not None:
         try:
-            package_root = Path(rospkg.RosPack().get_path("ros_langchain_node"))
-            candidate_paths.append(package_root / "src")
+            package_root = rospkg.RosPack().get_path("ros_langchain_node")
+            candidate_paths.append(os.path.join(package_root, "src"))
         except Exception:
             pass
 
-    current_file = Path(__file__).resolve()
+    current_file = os.path.abspath(__file__)
+    current_dir = os.path.dirname(current_file)
+    parent_dir = os.path.dirname(current_dir)
+    grandparent_dir = os.path.dirname(parent_dir)
     candidate_paths.extend(
         [
-            current_file.parent,
-            current_file.parent / "src",
-            current_file.parent.parent / "src",
-            current_file.parent.parent.parent / "src",
+            current_dir,
+            os.path.join(current_dir, "src"),
+            os.path.join(parent_dir, "src"),
+            os.path.join(grandparent_dir, "src"),
         ]
     )
 
     for path in candidate_paths:
-        if path.is_dir() and str(path) not in sys.path:
-            sys.path.insert(0, str(path))
+        if os.path.isdir(path) and path not in sys.path:
+            sys.path.insert(0, path)
 
 
 _ensure_package_src_on_path()
@@ -174,12 +181,12 @@ class LangchainNode:
 
         rospy.on_shutdown(self._shutdown)
 
-    def _agent_status(self) -> str:
+    def _agent_status(self):
         if _AGENT_IMPORT_ERROR is not None:
-            return f"无法导入 model_manager/config：{_AGENT_IMPORT_ERROR}"
+            return "无法导入 model_manager/config：%s" % _AGENT_IMPORT_ERROR
         return "未配置可用的模型后端或 model_manager 未就绪"
 
-    def _get_manager(self) -> ModelManagerLM:
+    def _get_manager(self):
         """
         获取模型管理器。
         如果当前没有 manager，则创建并加载模型。
@@ -193,7 +200,7 @@ class LangchainNode:
 
         return self.manager
 
-    def _build_and_load_manager(self) -> Optional[ModelManagerLM]:
+    def _build_and_load_manager(self):
         """
         创建 ModelManagerLM，并加载视觉模型。
         """
@@ -208,7 +215,7 @@ class LangchainNode:
                 chat_endpoint=CHAT_ENDPOINT,
             )
         except Exception as exc:
-            raise RuntimeError(f"ModelManager 初始化失败：{exc}") from exc
+            raise RuntimeError("ModelManager 初始化失败：%s" % exc)
 
         try:
             manager.load(
@@ -221,7 +228,7 @@ class LangchainNode:
             rospy.loginfo("模型已加载：%s", self.base_vision_model_identifier)
             return manager
         except Exception as exc:
-            raise RuntimeError(f"模型加载失败：{exc}") from exc
+            raise RuntimeError("模型加载失败：%s" % exc)
 
     def _unload_manager(self):
         """
@@ -244,25 +251,26 @@ class LangchainNode:
             finally:
                 self.manager = None
 
-    def _data_url_from_cv_image(self, cv_img) -> str:
+    def _data_url_from_cv_image(self, cv_img):
         ok, encoded = cv2.imencode(".png", cv_img)
         if not ok:
             raise RuntimeError("图像编码失败")
 
         return self._data_url_from_bytes(encoded.tobytes(), "image/png")
 
-    def _data_url_from_bytes(self, image_bytes: bytes, mime: str) -> str:
+    def _data_url_from_bytes(self, image_bytes, mime):
         if not image_bytes:
             raise ValueError("输入图像字节为空")
 
         data_b64 = base64.b64encode(image_bytes).decode("ascii")
-        return f"data:{mime or 'image/png'};base64,{data_b64}"
+        return "data:%s;base64,%s" % (mime or "image/png", data_b64)
 
-    def _data_url_from_path(self, path: Path) -> str:
-        mime = mimetypes.guess_type(str(path))[0] or "image/png"
-        return self._data_url_from_bytes(path.read_bytes(), mime)
+    def _data_url_from_path(self, path):
+        mime = mimetypes.guess_type(path)[0] or "image/png"
+        with open(path, "rb") as image_file:
+            return self._data_url_from_bytes(image_file.read(), mime)
 
-    def _data_url_from_request(self, req) -> str:
+    def _data_url_from_request(self, req):
         """
         从 service 请求中提取图像。
 
@@ -274,12 +282,12 @@ class LangchainNode:
         image_path = getattr(req, "image_path", "")
 
         if image_path:
-            path = Path(image_path).expanduser()
-            if not path.exists():
-                raise FileNotFoundError(f"图片路径不存在：{path}")
+            path = os.path.expanduser(image_path)
+            if not os.path.exists(path):
+                raise IOError("图片路径不存在：%s" % path)
             return self._data_url_from_path(path)
 
-        image_data = bytes(getattr(req, "image_data", []) or [])
+        image_data = bytearray(getattr(req, "image_data", []) or [])
         if image_data:
             return self._data_url_from_bytes(
                 image_data,
@@ -299,9 +307,24 @@ class LangchainNode:
 
         raise ValueError("请求中没有可用图像：请传入 image、image_path 或 image_data")
 
-    def call_agent_with_image(self, data_url: str) -> str:
+    def extract_message_text(self, response):
+        """
+        只提取模型返回中的 message 内容，过滤 reasoning。
+        """
+        messages = []
+
+        for item in response.get("output", []):
+            if item.get("type") == "message":
+                content = item.get("content", "")
+                if isinstance(content, basestring):
+                    messages.append(content.strip())
+
+        return "\n".join(messages).strip()
+
+    def call_agent_with_image(self, data_url):
         """
         调用本地视觉语言模型，生成图像描述。
+        只返回 type == message 的内容，不返回 reasoning。
         """
         manager = self._get_manager()
 
@@ -320,17 +343,15 @@ class LangchainNode:
                 store=STORE,
             )
         except Exception as exc:
-            raise RuntimeError(f"模型调用失败：{exc}") from exc
+            raise RuntimeError("模型调用失败：%s" % exc)
 
-        try:
-            text = response.get("output", [])[0].get("content", "")
-        except Exception:
-            text = str(response)
+        text = self.extract_message_text(response)
 
-        if not isinstance(text, str):
-            text = str(text)
+        if not text:
+            rospy.logwarn("未提取到 message 内容，原始 response=%s", response)
+            text = ""
 
-        return text.strip()
+        return text
 
     def speak(self, text):
         """
@@ -391,18 +412,26 @@ class LangchainNode:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="ROS/local LM image description node")
+    parser = argparse.ArgumentParser(
+        description="ROS/local LM image description node"
+    )
+
     parser.add_argument(
         "--standalone-test",
         action="store_true",
         help="load the model once and describe --image without starting the ROS service",
     )
+
     parser.add_argument(
         "--image",
         default="1.png",
         help="image path used with --standalone-test",
     )
-    args = parser.parse_args()
+
+    args, unknown = parser.parse_known_args()
+
+    if unknown:
+        print("Ignored ROS args:", unknown)
 
     if not args.standalone_test:
         if rospy is None or CvBridge is None:
@@ -419,12 +448,13 @@ if __name__ == "__main__":
             print("ModelManagerLM not available could not import. Exiting.")
             raise SystemExit(1)
 
-        test_image_path = Path(args.image)
-        if not test_image_path.is_absolute():
-            test_image_path = Path(__file__).parent / test_image_path
+        test_image_path = os.path.expanduser(args.image)
 
-        if not test_image_path.exists():
-            print(f"Test image not found: {test_image_path}")
+        if not os.path.isabs(test_image_path):
+            test_image_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), test_image_path)
+
+        if not os.path.exists(test_image_path):
+            print("Test image not found: %s" % test_image_path)
             raise SystemExit(1)
 
         mgr = ModelManagerLM(
@@ -435,7 +465,8 @@ if __name__ == "__main__":
         )
 
         try:
-            print(f"Loading model: {BASE_VISION_MODEL_IDENTIFIER}")
+            print("Loading model: %s" % BASE_VISION_MODEL_IDENTIFIER)
+
             mgr.load(
                 model_identifier=BASE_VISION_MODEL_IDENTIFIER,
                 context_length=CONTEXT_LENGTH,
@@ -445,12 +476,14 @@ if __name__ == "__main__":
             )
 
             data_url = image_to_data_url(str(test_image_path))
+
             prompt = [
                 {"type": "text", "content": "描述这张图片"},
                 {"type": "image", "data_url": data_url},
             ]
 
-            print(f"Calling chat with image: {test_image_path}")
+            print("Calling chat with image: %s" % test_image_path)
+
             resp = mgr.chat(
                 prompt=prompt,
                 temperature=TEMPERATURE,
@@ -460,8 +493,18 @@ if __name__ == "__main__":
                 store=STORE,
             )
 
+            messages = []
+
             try:
-                out = resp.get("output", [])[0].get("content", "")
+                for item in resp.get("output", []):
+                    if item.get("type") == "message":
+                        content = item.get("content", "")
+
+                        if isinstance(content, basestring):
+                            messages.append(content.strip())
+
+                out = "\n".join(messages).strip()
+
             except Exception:
                 out = str(resp)
 
@@ -472,5 +515,6 @@ if __name__ == "__main__":
                 print("Unloading model...")
                 mgr.unload()
                 print("Model unloaded.")
+
             except Exception as exc:
-                print(f"Unload failed: {exc}")
+                print("Unload failed: %s" % exc)

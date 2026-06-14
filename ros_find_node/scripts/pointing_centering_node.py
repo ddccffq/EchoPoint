@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 # coding=utf-8
 
 import os
@@ -613,7 +613,8 @@ class PointingCenteringNode(object):
     def capture_snapshot(self):
         if self.latest_frame is None:
             raise RuntimeError("No image frame available for snapshot")
-        os.makedirs(self.output_dir, exist_ok=True)
+        if not os.path.isdir(self.output_dir):
+            os.makedirs(self.output_dir)
         filename = "pointing_%s.jpg" % datetime.now().strftime("%Y%m%d_%H%M%S")
         path = os.path.join(self.output_dir, filename)
         cv2.imwrite(path, self.latest_frame)

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 # coding=utf-8
 
 import json
@@ -6,7 +6,11 @@ import os
 import threading
 import time
 from datetime import datetime
-from urllib.request import urlopen
+
+try:
+    from urllib.request import urlopen
+except ImportError:
+    from urllib2 import urlopen
 
 import rospy
 from bodyhub.msg import JointControlPoint
@@ -455,7 +459,8 @@ class RedBallCenteringNode(object):
         return float(center[0]), float(center[1])
 
     def capture_snapshot(self):
-        os.makedirs(self.output_dir, exist_ok=True)
+        if not os.path.isdir(self.output_dir):
+            os.makedirs(self.output_dir)
         filename = "red_ball_%s.jpg" % datetime.now().strftime("%Y%m%d_%H%M%S")
         path = os.path.join(self.output_dir, filename)
         data = urlopen(self.snapshot_url, timeout=3.0).read()

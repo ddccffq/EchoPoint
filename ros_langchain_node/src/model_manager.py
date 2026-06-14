@@ -1,4 +1,4 @@
-from typing import Any, Union, List, Dict, Optional
+# -*- coding: utf-8 -*-
 
 import requests
 import base64
@@ -18,24 +18,24 @@ class ModelManagerLM:
 
     def __init__(
         self,
-        base_local_server: str,
-        load_endpoint: str,
-        unload_endpoint: str,
-        chat_endpoint: str
+        base_local_server,
+        load_endpoint,
+        unload_endpoint,
+        chat_endpoint
     ):
-        self.load_url = f"{base_local_server.strip('/')}{load_endpoint}"
-        self.unload_url = f"{base_local_server.strip('/')}{unload_endpoint}"
-        self.chat_url = f"{base_local_server.strip('/')}{chat_endpoint}"
+        self.load_url = "%s%s" % (base_local_server.strip("/"), load_endpoint)
+        self.unload_url = "%s%s" % (base_local_server.strip("/"), unload_endpoint)
+        self.chat_url = "%s%s" % (base_local_server.strip("/"), chat_endpoint)
         self.instance_id = None
 
     def load(
         self,
-        model_identifier: str,
-        context_length: int,
-        eval_batch_size: int,
-        flash_attention: bool,
-        offload_kv_cache_to_gpu: bool
-    ) -> Any:
+        model_identifier,
+        context_length,
+        eval_batch_size,
+        flash_attention,
+        offload_kv_cache_to_gpu
+    ):
         payload = {
                 "model": model_identifier,
                 "context_length": context_length,
@@ -57,13 +57,13 @@ class ModelManagerLM:
 
     def chat(
         self,
-        prompt: Union[str, List[Dict]],
-        temperature: float,
-        stream: bool,
-        max_output_tokens: int,
-        system_prompt: Optional[str] = None,
-        store: bool = False,
-    ) -> Any:
+        prompt,
+        temperature,
+        stream,
+        max_output_tokens,
+        system_prompt=None,
+        store=False,
+    ):
         if not self.instance_id:
             raise RuntimeError(
                 "model not loaded"
@@ -91,7 +91,7 @@ class ModelManagerLM:
 
         return r.json()
 
-    def unload(self) -> Any:
+    def unload(self):
         if not self.instance_id:
             return
 
@@ -156,7 +156,15 @@ def main():
         store=STORE
     )
 
-    print(response["output"][0]["content"])
+    messages = []
+
+    for item in response["output"]:
+        if item["type"] == "message":
+            messages.append(item["content"])
+
+    final_text = "\n".join(messages)
+
+    print(final_text)
 
     manager.unload()
 
